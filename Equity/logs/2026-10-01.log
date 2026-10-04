@@ -1,0 +1,196 @@
+2026-10-01 23:20:40,947 ERROR Failed ABBOTINDIA.NS
+Traceback (most recent call last):
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1791, in main
+    row = analyze_stock(
+        symbol,
+        market["regime"]
+    )
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1431, in analyze_stock
+    raise ValueError(
+        "low_volume"
+    )
+ValueError: low_volume
+2026-10-01 23:20:59,014 ERROR $BAGMANE.NS: No data found, symbol may be delisted
+2026-10-01 23:20:59,016 ERROR 
+1 Failed download:
+2026-10-01 23:20:59,016 ERROR ['BAGMANE.NS']: No data found, symbol may be delisted
+2026-10-01 23:21:01,497 ERROR $BAGMANE.NS: No data found, symbol may be delisted
+2026-10-01 23:21:01,499 ERROR 
+1 Failed download:
+2026-10-01 23:21:01,499 ERROR ['BAGMANE.NS']: No data found, symbol may be delisted
+2026-10-01 23:21:05,081 ERROR $BAGMANE.NS: No data found, symbol may be delisted
+2026-10-01 23:21:05,082 ERROR 
+1 Failed download:
+2026-10-01 23:21:05,082 ERROR ['BAGMANE.NS']: No data found, symbol may be delisted
+2026-10-01 23:21:09,585 ERROR Failed BAGMANE.NS
+Traceback (most recent call last):
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1791, in main
+    row = analyze_stock(
+        symbol,
+        market["regime"]
+    )
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1387, in analyze_stock
+    df = download_history(
+        symbol,
+        HISTORY_PERIOD,
+        INTERVAL
+    )
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 189, in download_history
+    raise RuntimeError(
+        f"{ticker}: {last_error}"
+    )
+RuntimeError: BAGMANE.NS: No data returned
+2026-10-01 23:21:14,699 ERROR Failed BHARATCOAL.NS
+Traceback (most recent call last):
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1791, in main
+    row = analyze_stock(
+        symbol,
+        market["regime"]
+    )
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1396, in analyze_stock
+    raise ValueError(reason)
+ValueError: insufficient_history
+2026-10-01 23:21:24,584 ERROR Failed CMPDI.NS
+Traceback (most recent call last):
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1791, in main
+    row = analyze_stock(
+        symbol,
+        market["regime"]
+    )
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1396, in analyze_stock
+    raise ValueError(reason)
+ValueError: insufficient_history
+2026-10-01 23:21:27,221 ERROR Failed CLEANMAX.NS
+Traceback (most recent call last):
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1791, in main
+    row = analyze_stock(
+        symbol,
+        market["regime"]
+    )
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1396, in analyze_stock
+    raise ValueError(reason)
+ValueError: insufficient_history
+2026-10-01 23:21:39,237 ERROR $DUMMYHEG.NS: No data found, symbol may be delisted
+2026-10-01 23:21:39,239 ERROR 
+1 Failed download:
+2026-10-01 23:21:39,239 ERROR ['DUMMYHEG.NS']: No data found, symbol may be delisted
+2026-10-01 23:21:41,272 ERROR $DUMMYHEG.NS: No data found, symbol may be delisted
+2026-10-01 23:21:41,273 ERROR 
+1 Failed download:
+2026-10-01 23:21:41,273 ERROR ['DUMMYHEG.NS']: No data found, symbol may be delisted
+2026-10-01 23:21:44,595 ERROR $DUMMYHEG.NS: No data found, symbol may be delisted
+2026-10-01 23:21:44,597 ERROR 
+1 Failed download:
+2026-10-01 23:21:44,597 ERROR ['DUMMYHEG.NS']: No data found, symbol may be delisted
+2026-10-01 23:21:49,104 ERROR Failed DUMMYHEG.NS
+Traceback (most recent call last):
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1791, in main
+    row = analyze_stock(
+        symbol,
+        market["regime"]
+    )
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1387, in analyze_stock
+    df = download_history(
+        symbol,
+        HISTORY_PERIOD,
+        INTERVAL
+    )
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 189, in download_history
+    raise RuntimeError(
+        f"{ticker}: {last_error}"
+    )
+RuntimeError: DUMMYHEG.NS: No data returned
+2026-10-01 23:21:56,810 ERROR Failed FRACTAL.NS
+Traceback (most recent call last):
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1791, in main
+    row = analyze_stock(
+        symbol,
+        market["regime"]
+    )
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1396, in analyze_stock
+    raise ValueError(reason)
+ValueError: insufficient_history
+2026-10-01 23:22:10,417 ERROR Failed HONAUT.NS
+Traceback (most recent call last):
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1791, in main
+    row = analyze_stock(
+        symbol,
+        market["regime"]
+    )
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1431, in analyze_stock
+    raise ValueError(
+        "low_volume"
+    )
+ValueError: low_volume
+2026-10-01 23:22:11,458 ERROR Failed ICICIAMC.NS
+Traceback (most recent call last):
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1791, in main
+    row = analyze_stock(
+        symbol,
+        market["regime"]
+    )
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1396, in analyze_stock
+    raise ValueError(reason)
+ValueError: insufficient_history
+2026-10-01 23:22:36,812 ERROR Failed MRF.NS
+Traceback (most recent call last):
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1791, in main
+    row = analyze_stock(
+        symbol,
+        market["regime"]
+    )
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1431, in analyze_stock
+    raise ValueError(
+        "low_volume"
+    )
+ValueError: low_volume
+2026-10-01 23:22:42,103 ERROR Failed MEESHO.NS
+Traceback (most recent call last):
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1791, in main
+    row = analyze_stock(
+        symbol,
+        market["regime"]
+    )
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1396, in analyze_stock
+    raise ValueError(reason)
+ValueError: insufficient_history
+2026-10-01 23:23:34,740 ERROR Failed VAML.NS
+Traceback (most recent call last):
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1791, in main
+    row = analyze_stock(
+        symbol,
+        market["regime"]
+    )
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1396, in analyze_stock
+    raise ValueError(reason)
+ValueError: insufficient_history
+2026-10-01 23:23:34,917 ERROR Failed VISL.NS
+Traceback (most recent call last):
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1791, in main
+    row = analyze_stock(
+        symbol,
+        market["regime"]
+    )
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1396, in analyze_stock
+    raise ValueError(reason)
+ValueError: insufficient_history
+2026-10-01 23:23:35,560 ERROR Failed VOGL.NS
+Traceback (most recent call last):
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1791, in main
+    row = analyze_stock(
+        symbol,
+        market["regime"]
+    )
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1396, in analyze_stock
+    raise ValueError(reason)
+ValueError: insufficient_history
+2026-10-01 23:23:35,736 ERROR Failed VEDPOWER.NS
+Traceback (most recent call last):
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1791, in main
+    row = analyze_stock(
+        symbol,
+        market["regime"]
+    )
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1396, in analyze_stock
+    raise ValueError(reason)
+ValueError: insufficient_history

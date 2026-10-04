@@ -1,0 +1,84 @@
+2026-10-02 18:19:27,111 ERROR Failed ICICIAMC.NS
+Traceback (most recent call last):
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1921, in main
+    row = analyze_stock(
+        symbol,
+        market["regime"]
+    )
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1475, in analyze_stock
+    raise ValueError(reason)
+ValueError: insufficient_history
+2026-10-02 18:19:37,643 ERROR Failed MRF.NS
+Traceback (most recent call last):
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1921, in main
+    row = analyze_stock(
+        symbol,
+        market["regime"]
+    )
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1510, in analyze_stock
+    raise ValueError(
+        "low_volume"
+    )
+ValueError: low_volume
+2026-10-02 18:19:40,556 ERROR Failed MEESHO.NS
+Traceback (most recent call last):
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1921, in main
+    row = analyze_stock(
+        symbol,
+        market["regime"]
+    )
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1475, in analyze_stock
+    raise ValueError(reason)
+ValueError: insufficient_history
+2026-10-02 18:20:01,068 ERROR Failed VAML.NS
+Traceback (most recent call last):
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1921, in main
+    row = analyze_stock(
+        symbol,
+        market["regime"]
+    )
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1475, in analyze_stock
+    raise ValueError(reason)
+ValueError: insufficient_history
+2026-10-02 18:30:51,500 ERROR Failed ICICIAMC.NS
+Traceback (most recent call last):
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1919, in main
+    row = analyze_stock(
+        symbol,
+        market["regime"]
+    )
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1473, in analyze_stock
+    raise ValueError(reason)
+ValueError: insufficient_history
+2026-10-02 18:31:01,756 ERROR Failed MRF.NS
+Traceback (most recent call last):
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1919, in main
+    row = analyze_stock(
+        symbol,
+        market["regime"]
+    )
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1508, in analyze_stock
+    raise ValueError(
+        "low_volume"
+    )
+ValueError: low_volume
+2026-10-02 18:31:05,065 ERROR Failed MEESHO.NS
+Traceback (most recent call last):
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1919, in main
+    row = analyze_stock(
+        symbol,
+        market["regime"]
+    )
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1473, in analyze_stock
+    raise ValueError(reason)
+ValueError: insufficient_history
+2026-10-02 18:31:25,351 ERROR Failed VAML.NS
+Traceback (most recent call last):
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1919, in main
+    row = analyze_stock(
+        symbol,
+        market["regime"]
+    )
+  File "C:\Users\lenovo\Desktop\Stocks\Equity\indian_stock_swing_analyst.py", line 1473, in analyze_stock
+    raise ValueError(reason)
+ValueError: insufficient_history
