@@ -86,6 +86,13 @@ NSE_URLS = {
     "NIFTY100": "https://nsearchives.nseindia.com/content/indices/ind_nifty100list.csv",
     "NIFTY200": "https://nsearchives.nseindia.com/content/indices/ind_nifty200list.csv",
     "NIFTY500": "https://nsearchives.nseindia.com/content/indices/ind_nifty500list.csv",
+    "MIDCAP150": "https://nsearchives.nseindia.com/content/indices/ind_niftymidcap150list.csv",
+    "SMALLCAP250": "https://nsearchives.nseindia.com/content/indices/ind_niftysmallcap250list.csv",
+    "MICROCAP250": "https://nsearchives.nseindia.com/content/indices/ind_niftymicrocap250_list.csv",
+    # Composite: union of all of the above (~1250 unique tradeable stocks).
+    # True 2700 needs NSE's CM master file which blocks bots; NSE_ALL covers
+    # everything liquid enough to swing-trade. Àny --extra symbol is always added.
+    "NSE_ALL": "COMPOSITE:NIFTY500,MIDCAP150,SMALLCAP250,MICROCAP250",
 }
 NSE_ANN = "https://www.nseindia.com/companies-listing/corporate-filings-announcements?symbol={}&tabIndex=equity"
 FALLBACK = ("ADANIENT ADANIPORTS APOLLOHOSP ASIANPAINT AXISBANK BAJAJ-AUTO BAJFINANCE BAJAJFINSV BEL "
@@ -125,8 +132,82 @@ def sym(t):
     return str(t).replace(".NS", "").upper()
 
 
+def _fetch_index_csv(url):
+    """Download one NSE index csv, return (tickers, sectors, names). Empty on failure."""
+    try:
+        s = requests.Session()
+        s.headers.update({"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+                          "Referer": "https://www.nseindia.com/", "Accept": "text/csv,*/*"})
+        try:
+            s.get("https://www.nseindia.com", timeout=10)
+        except Exception:
+            pass
+        r = s.get(url, timeout=25)
+        r.raise_for_status()
+        df = pd.read_csv(StringIO(r.text))
+        df.columns = [str(c).strip() for c in df.columns]
+        col = next(c for c in df.columns if c.upper() == "SYMBOL")
+        ind = next((c for c in df.columns if c.upper() == "INDUSTRY"), None)
+        nm = next((c for c in df.columns if c.upper().startswith("COMPANY")), None)
+        df[col] = df[col].astype(str).str.strip().str.upper()
+        tickers = sorted(set(df[col].dropna() + ".NS"))
+        sectors = dict(zip(df[col], df[ind])) if ind else {}
+        names = dict(zip(df[col], df[nm])) if nm else {}
+        return tickers, sectors, names
+    except Exception as e:
+        print(f"  index fetch failed ({url.split('/')[-1]}): {e}")
+        return [], {}, {}
+
+
 def get_universe(name):
     """Returns (tickers, {symbol: industry}, {symbol: company name}). Caches the NSE csv locally."""
+    # Composite universe: union of several index lists (NSE_ALL).
+    if isinstance(NSE_URLS.get(name), str) and NSE_URLS[name].startswith("COMPOSITE:"):
+        parts = NSE_URLS[name].split(":", 1)[1].split(",")
+        tickers, sectors, names = [], {}, {}
+        seen = set()
+        for p in parts:
+            p = p.strip()
+            cache = CACHE_DIR / f"{p}.csv"
+            if cache.exists():
+                try:
+                    import csv as _csv
+                    with open(cache, encoding="utf-8") as f:
+                        rd = _csv.DictReader(f)
+                        cols = {k.strip().upper(): k for k in (rd.fieldnames or [])}
+                        for row in rd:
+                            sy = str(row.get(cols.get("SYMBOL", "Symbol"), "")).strip().upper()
+                            if sy and sy + ".NS" not in seen:
+                                seen.add(sy + ".NS")
+                                tickers.append(sy + ".NS")
+                                if "INDUSTRY" in cols:
+                                    sectors[sy] = row.get(cols["INDUSTRY"], "")
+                                for ck in cols:
+                                    if ck.startswith("COMPANY"):
+                                        names[sy] = row.get(cols[ck], "")
+                                        break
+                    continue
+                except Exception:
+                    pass
+            t, se, na = _fetch_index_csv(NSE_URLS[p])
+            for x in t:
+                if x not in seen:
+                    seen.add(x)
+                    tickers.append(x)
+            sectors.update(se)
+            names.update(na)
+        # also merge custom list: watchlist.txt (one NSE symbol per line) if present
+        wl = BASE_DIR / "watchlist.txt"
+        if wl.exists():
+            for line in wl.read_text(encoding="utf-8").splitlines():
+                sy = line.strip().upper().removesuffix(".NS")
+                if sy and sy + ".NS" not in seen:
+                    seen.add(sy + ".NS")
+                    tickers.append(sy + ".NS")
+        tickers.sort()
+        print(f"Composite universe {name}: {len(tickers)} unique stocks from {parts}"
+              + (" + watchlist.txt" if wl.exists() else ""))
+        return tickers, sectors, names
     cache = CACHE_DIR / f"{name}.csv"
     text = None
     try:
@@ -508,6 +589,70 @@ def evaluate(t, d, m, sectors, names):
     return row, None
 
 
+SMALLCAP_RELAX = dict(min_history=60, max_ext=12.0, min_value=5_000_000,
+                      min_volume=20_000, rvol=0.5, rsi_max=82, adx=12,
+                      atr_min=1.0, atr_max=8.0, ret1=10, ret5=20)
+
+
+def evaluate_relaxed(t, d, m, sectors, names, rx=SMALLCAP_RELAX):
+    """Smallcap-tolerant 2nd pass. Strict evaluate() stays the default; this is
+    opt-in via --smallcap. EMA200 required only if it exists (recent listings)."""
+    row, _ = evaluate(t, d, m, sectors, names)
+    if row:
+        row["_mode"] = "strict"
+        return row, None
+    if len(d) < rx["min_history"]:
+        return None, "short history (even relaxed)"
+    x = indicators(d)
+    r = x.iloc[-1]
+    if pd.isna(r.get("EMA50")) or pd.isna(r.get("RSI14")) or pd.isna(r.get("ADX14")):
+        return None, "indicator NaN (even relaxed)"
+    if x.Volume.tail(20).mean() < rx["min_volume"] or (x.Close * x.Volume).tail(20).mean() < rx["min_value"]:
+        return None, "illiquid (even relaxed)"
+    s = classify(r)
+    if s == "WATCH":
+        return None, "no setup pattern (even relaxed)"
+    ok_trend = (r.Close > r.EMA50 and r.EMA20 > r.EMA50
+                and (not np.isfinite(r.get("EMA200", np.nan)) or r.Close > r.EMA200))
+    if not ok_trend:
+        return None, "failed trend (even relaxed)"
+    if not (45 <= r.RSI14 <= rx["rsi_max"]):
+        return None, f"RSI {r.RSI14:.0f} outside 45-{rx['rsi_max']} (relaxed)"
+    if r.ADX14 < rx["adx"] or r.RVOL < rx["rvol"]:
+        return None, f"ADX/RVOL weak (relaxed: ADX {r.ADX14:.0f}, RVOL {r.RVOL:.2f})"
+    if not (rx["atr_min"] <= r.ATRpct <= rx["atr_max"]):
+        return None, "ATR% outside relaxed band"
+    if r.DistEMA20 > rx["max_ext"] or r.RET1 > rx["ret1"] or r.RET5 > rx["ret5"]:
+        return None, "extended/spiking (even relaxed)"
+    lv = trade_levels(r, s)
+    if lv is None:
+        return None, "reward:risk too low"
+    h7, h10, hn = hist_stats(x)
+    sc, why = score(r, m, h7)
+    S = sym(t)
+    row = {"Stock": S, "Company": names.get(S, ""), "Sector": sectors.get(S, ""), "Setup": s,
+           "Base Score": sc, "Last Close": float(r.Close),
+           "Entry Low": lv["lo"], "Entry High": lv["hi"], "Stop Loss": lv["stop"],
+           "Stop %": (lv["ref"] - lv["stop"]) / lv["ref"] * 100,
+           "Target 1": lv["t1"], "Target 2": lv["t2"], "RR T1": lv["rr1"], "RR T2": lv["rr2"],
+           "Risk/Share": lv["risk"], "Suggested Qty*": lv["qty"], "Position Value*": lv["qty"] * lv["ref"],
+           "Hist Hit 7%": h7, "Hist Hit 10%": h10, "Hist Samples": hn,
+           "RVOL": r.RVOL, "RSI14": r.RSI14, "ADX14": r.ADX14, "ATR%": r.ATRpct,
+           "1D%": r.RET1, "5D%": r.RET5, "1M%": r.RET21, "3M%": r.RET63,
+           "vs NIFTY 1M%": r.RET21 - m["r21"] if np.isfinite(m["r21"]) else np.nan,
+           "52W High Dist%": r.Dist52W, "20D High Dist%": r.Dist20, "EMA20 Dist%": r.DistEMA20,
+           "EMA20": r.EMA20, "EMA50": r.EMA50, "EMA200": r.EMA200,
+           "MACD": r.MACD, "MACD Signal": r.MACDSignal, "MACD Hist": r.MACDHist,
+           "+DI": r.PlusDI, "-DI": r.MinusDI, "ATR14": r.ATR14,
+           "OBV vs EMA20": "Rising" if r.OBV > r.OBVEMA20 else "Weak",
+           "Up/Down Vol 10D": r.UDVol, "BB %B": r.BBpctB, "BB Width%": r.BBwidth,
+           "BB Squeeze": "Yes" if r.BBsqRecent >= 1 else "No", "Stoch K": r.StochK, "Stoch D": r.StochD,
+           "NIFTY Regime": m["regime"], "NIFTY 1M%": m["r21"], "NIFTY 3M%": m["r63"],
+           "_why": why, "_flags": ["RELAXED smallcap"], "_ticker": t, "_mode": "relaxed",
+           "NSE Announcements": NSE_ANN.format(S)}
+    return row, None
+
+
 # ----------------------------------------------------------------------------
 # STAGE 2: enrichment (shortlist only)
 # ----------------------------------------------------------------------------
@@ -768,13 +913,23 @@ def main():
     ap.add_argument("--keep-partial", action="store_true")
     ap.add_argument("--picks", type=int, default=MAX_PICKS)
     ap.add_argument("--min-score", type=int, default=MIN_SCORE)
+    ap.add_argument("--smallcap", action="store_true",
+                    help="2nd-pass smallcap tolerance (60 bars, RVOL>=0.5, ext<=12%%). Needed for micro/smallcap alerts.")
+    ap.add_argument("--watchlist", default=None,
+                    help="comma list of extra NSE symbols to always scan (e.g. TFCILTD,RML,GKSL,ROLEXRINGS)")
     args = ap.parse_args()
     MIN_SCORE, MAX_PICKS = args.min_score, args.picks
 
-    print("NIFTY SWING ANALYST v2 | Universe:", args.universe)
+    print("NIFTY SWING ANALYST v2 | Universe:", args.universe, "| smallcap mode:", args.smallcap)
     m = market_regime(args.keep_partial)
     print("NIFTY regime:", m["regime"], "| price:", m["price"])
     tickers, sectors, names = get_universe(args.universe)
+    if args.watchlist:
+        for w in args.watchlist.split(","):
+            sy = w.strip().upper().removesuffix(".NS")
+            if sy and sy + ".NS" not in set(tickers):
+                tickers.append(sy + ".NS")
+        print(f"+ watchlist extras -> {len(tickers)} total")
     print("Stocks in universe:", len(tickers))
     data = download_all(tickers)
     print(f"\nPrice data received for {len(data)}/{len(tickers)} stocks")
@@ -786,8 +941,9 @@ def main():
     for t, d in data.items():
         if not args.keep_partial:
             d = drop_partial(d)
+        fn = evaluate_relaxed if args.smallcap else evaluate
         try:
-            row, why = evaluate(t, d, m, sectors, names)
+            row, why = fn(t, d, m, sectors, names)
         except Exception as e:
             row, why = None, f"error: {e}"
         if row:

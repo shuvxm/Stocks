@@ -25,17 +25,122 @@ import numpy as np
 import pandas as pd
 
 import indian_stock_swing_analyst as n
+from report_format import write_report
+
 
 # ---- The alerts you received. Edit symbols if Yahoo/NSE symbol differs (check on finance.yahoo.com).
 # buy_low/buy_high: "Buy above X" -> buy_low=X, buy_high=None | range -> both | "Buy at CMP" -> both None
 ALERTS = {
-    "Tourism Finance Corporation of India Limited":    dict(alert="30-Sep", buy_low=149,  buy_high=None, targets=[155, 160, 170], sl=140),
-    "Tega Industries Limited":       dict(alert="01-Oct", buy_low=2200, buy_high=None, targets=[2250, 2300, 2400, 2500, 2600], sl=2020),
-    "Sona BLW Precision Forgings Limite":   dict(alert="01-Oct", buy_low=830,  buy_high=840,  targets=[850, 880, 900, 950, 1000], sl=800),
-    "Rane (Madras) Limited":        dict(alert="01-Oct", buy_low=1416, buy_high=None, targets=[1450, 1470, 1550, 1650], sl=1310),  # <-- put the real NSE symbol
-    "Gujarat Kidney And Super Speciality Limited":       dict(alert="30-Sep", buy_low=190,  buy_high=192,  targets=[200, 215, 230, 240], sl=185),
-    "Rolex Rings Limited": dict(alert="30-Sep", buy_low=None, buy_high=None, targets=[200, 210, 225, 250], sl=186),
+    "GREENPLY":   dict(alert="06-Oct", buy_low=315,  buy_high=None, targets=[330, 340, 360, 380, 400], sl=290),
+    "JAYKAY":     dict(alert="06-Oct", buy_low=230,  buy_high=None, targets=[240, 250, 275, 300], sl=195),
 }
+
+
+# Company name -> NSE symbol (so either form works in ALERTS / --extra). Verify on finance.yahoo.com (add .NS).
+ALIAS = {
+    "TOURISM FINANCE CORPORATION OF INDIA LIMITED": "TFCILTD", "TFCI LTD": "TFCILTD",
+    "TEGA INDUSTRIES LIMITED": "TEGA", "TEGA INDUSTRIES LTD": "TEGA",
+    "SONA BLW PRECISION FORGINGS LIMITED": "SONACOMS", "SONA BLW PRECISION FORGINGS LIMITE": "SONACOMS",
+    "SONA BLW PRECISION FORGINGS LTD": "SONACOMS",
+    "GREENPLY INDUSTRIES LIMITED": "GREENPLY", "GREENPLY INDUSTRIES LTD": "GREENPLY",
+    "JAYKAY ENTERPRISES LIMITED": "JAYKAY", "JAYKAY ENTERPRISES LTD": "JAYKAY",
+}
+ALERTS_U = {k.strip().upper(): v for k, v in ALERTS.items()}
+
+
+def resolve(label, names):
+    """Return the NSE symbol for a label that may be a symbol or a company name."""
+    s = label.strip().upper()
+    if s in ALIAS:
+        return ALIAS[s]
+    # common Yahoo suffixes users paste by mistake
+    s = s.removesuffix(".NS").removesuffix(".BO").removesuffix(".NSE")
+    if s in ALIAS:
+        return ALIAS[s]
+    if " " in s:
+        rev = {str(v).strip().upper(): k for k, v in names.items()}
+        if s in rev:
+            return rev[s]
+        print(f"!! '{label}' looks like a company name, not an NSE symbol. Add it to ALIAS or use the symbol.")
+        return None
+    return s
+
+
+# ---- Relaxed (smallcap / recent-listing) evaluation -------------------------
+# Your 6 alerts are mostly smallcaps outside NIFTY500. The default strategy was
+# tuned for liquid NIFTY stocks: 220 bars min (needs EMA200), RVOL>=0.9-1.3,
+# max 10% above EMA20. That rejects TEGA (10.3% ext), RML/ROLEX (low RVOL),
+# GKSL (short history). This wrapper keeps the default strict path intact and
+# adds a fair "would the setup have qualified under smallcap tolerance?" check.
+def relaxed_evaluate(t, past, m, sectors, names):
+    """Try strict evaluate first; if rejected for known smallcap reasons, retry relaxed."""
+    row, why = n.evaluate(t, past, m, sectors, names)
+    if row:
+        row["_mode"] = "strict"
+        return row, None
+    strict_why = why or ""
+    # only relax these known smallcap rejections, nothing else
+    if strict_why not in ("short history", "indicator NaN", "no setup pattern",
+                           "failed trend/momentum filters", "illiquid"):
+        return None, strict_why
+    if len(past) < 60:  # truly too new, even relaxed can't score
+        return None, strict_why
+    # --- temporarily loosen thresholds, restore afterwards ---
+    saved = (n.MIN_HISTORY, n.MAX_EXT_EMA20, n.MIN_AVG_VALUE, n.MIN_AVG_VOLUME,
+             dict(n.RVOL_MIN), n.RSI_MAX)
+    try:
+        n.MIN_HISTORY = 60
+        n.MAX_EXT_EMA20 = 12.0
+        n.MIN_AVG_VALUE = 5_000_000   # Rs 0.5 Cr/day (vs 2 Cr strict)
+        n.MIN_AVG_VOLUME = 20_000
+        n.RVOL_MIN = {k: min(v, 0.5) for k, v in saved[4].items()}
+        n.RSI_MAX = 82
+        x = n.indicators(past)
+        r = x.iloc[-1]
+        # need at least EMA50; allow EMA200-NaN for recent listings
+        if pd.isna(r.get("EMA50")) or pd.isna(r.get("RSI14")) or pd.isna(r.get("ADX14")):
+            return None, strict_why
+        s = n.classify(r)
+        if s == "WATCH":
+            return None, strict_why
+        # relaxed passes: EMA200 required only if it exists
+        ok_trend = (r.Close > r.EMA50 and r.EMA20 > r.EMA50
+                    and (not np.isfinite(r.get("EMA200", np.nan)) or r.Close > r.EMA200))
+        if not ok_trend:
+            return None, strict_why
+        if not (45 <= r.RSI14 <= n.RSI_MAX):
+            return None, strict_why
+        if r.ADX14 < 12 or r.DistEMA20 > n.MAX_EXT_EMA20 or r.RET1 > 10 or r.RET5 > 20:
+            return None, strict_why
+        if not (1.0 <= r.ATRpct <= 8.0):
+            return None, strict_why
+        lv = n.trade_levels(r, s)
+        if lv is None:
+            return None, strict_why
+        h7, h10, hn = n.hist_stats(x)
+        sc, why2 = n.score(r, m, h7)
+        S = n.sym(t)
+        row = {"Stock": S, "Company": names.get(S, ""), "Sector": sectors.get(S, ""),
+               "Setup": s, "Base Score": sc, "Last Close": float(r.Close),
+               "Entry Low": lv["lo"], "Entry High": lv["hi"], "Stop Loss": lv["stop"],
+               "Stop %": (lv["ref"] - lv["stop"]) / lv["ref"] * 100,
+               "Target 1": lv["t1"], "Target 2": lv["t2"], "RR T1": lv["rr1"], "RR T2": lv["rr2"],
+               "Risk/Share": lv["risk"], "Suggested Qty*": lv["qty"],
+               "Position Value*": lv["qty"] * lv["ref"],
+               "Hist Hit 7%": h7, "Hist Hit 10%": h10, "Hist Samples": hn,
+               "RVOL": r.RVOL, "RSI14": r.RSI14, "ADX14": r.ADX14, "ATR%": r.ATRpct,
+               "1D%": r.RET1, "5D%": r.RET5, "1M%": r.RET21, "3M%": r.RET63,
+               "vs NIFTY 1M%": r.RET21 - m["r21"] if np.isfinite(m["r21"]) else np.nan,
+               "52W High Dist%": r.Dist52W, "20D High Dist%": r.Dist20, "EMA20 Dist%": r.DistEMA20,
+               "EMA20": r.EMA20, "EMA50": r.EMA50, "EMA200": r.EMA200,
+               "NIFTY Regime": m["regime"], "_why": why2, "_flags": ["RELAXED smallcap mode"],
+               "_ticker": t, "_mode": "relaxed",
+               "NSE Announcements": n.NSE_ANN.format(S)}
+        return row, None
+    finally:
+        (n.MIN_HISTORY, n.MAX_EXT_EMA20, n.MIN_AVG_VALUE, n.MIN_AVG_VOLUME,
+         rv, n.RSI_MAX) = saved
+        n.RVOL_MIN = rv
 
 
 def cut(d, asof):
@@ -123,16 +228,21 @@ def main():
     ap.add_argument("--extra", default=",".join(ALERTS), help="comma list of NSE symbols to always evaluate")
     ap.add_argument("--period", default="3y")
     ap.add_argument("--min-score", type=int, default=n.MIN_SCORE)
+    ap.add_argument("--relaxed", action="store_true",
+                    help="also score --extra stocks under smallcap tolerance (60 bars, RVOL>=0.5, ext<=12%%)")
     args = ap.parse_args()
     asof = pd.Timestamp(args.asof).normalize()
     n.HISTORY_PERIOD = args.period
     n.MIN_SCORE = args.min_score
-    focus = [s.strip().upper() for s in args.extra.split(",") if s.strip()]
+    labels = [s.strip().upper() for s in args.extra.split(",") if s.strip()]
 
     print(f"POINT-IN-TIME BACKTEST | as of close {asof:%d-%b-%Y} | universe {args.universe}")
     tickers, sectors, names = n.get_universe(args.universe)
     base = set(tickers)
-    all_t = list(tickers) + [s + ".NS" for s in focus if s + ".NS" not in base]
+    focus = [(lab, resolve(lab, names)) for lab in labels]
+    focus = [(lab, sy) for lab, sy in focus if sy]
+    print("Alert stocks ->", ", ".join(f"{lab}={sy}.NS" for lab, sy in focus))
+    all_t = list(tickers) + [sy + ".NS" for _, sy in focus if sy + ".NS" not in base]
     data = n.download_all(all_t)
     print(f"\nData for {len(data)}/{len(all_t)} tickers")
 
@@ -153,11 +263,25 @@ def main():
         pasts[t] = past
         row, why = n.evaluate(t, past, m, sectors, names)
         if row:
+            row["_mode"] = "strict"
             rows[t] = row
         else:
             rejects[t] = why
             if t in base:
                 funnel[why] += 1
+
+    # relaxed 2nd pass ONLY for --extra (alert) stocks, so smallcaps get a fair score
+    # without polluting the main universe funnel / base-rate.
+    focus_syms = {sy + ".NS" for _, sy in focus}
+    if args.relaxed:
+        for t in sorted(focus_syms):
+            if t in rows or t not in pasts:
+                continue
+            row, why = relaxed_evaluate(t, pasts[t], m, sectors, names)
+            if row:
+                rows[t] = row
+            elif why and "relaxed" not in str(why).lower():
+                rejects[t] = rejects.get(t, why) + " | relaxed: " + str(why)
 
     cands = sorted((r for t, r in rows.items() if t in base), key=lambda r: r["Base Score"], reverse=True)
     picks = [r for r in cands if r["Base Score"] >= n.MIN_SCORE][:n.MAX_PICKS]
@@ -169,9 +293,9 @@ def main():
 
     # ---------------- focus stocks
     focus_rows = []
-    for S in focus:
+    for lab, S in focus:
         t = S + ".NS"
-        a = ALERTS.get(S, {})
+        a = ALERTS_U.get(lab, ALERTS_U.get(S, {}))
         rec = {"Stock": S, "Alert date": a.get("alert", ""), "In scanned universe?": "Yes" if t in base else "NO - not in " + args.universe}
         fut = futs.get(t)
         if t not in data:
@@ -186,18 +310,19 @@ def main():
             elif r["Base Score"] >= n.WATCH_SCORE: st = "WOULD BE WATCHLIST"
             else: st = f"passed filters, score {r['Base Score']} below watch cut"
             if t not in base: st += " [if it were scanned]"
+            if r.get("_mode") == "relaxed": st += " [RELAXED smallcap]"
             rec.update({"Status on asof": st, "Setup": r["Setup"], "Base Score": r["Base Score"], "Close asof": r["Last Close"],
                         "Strategy entry": f"{r['Entry Low']:.2f}-{r['Entry High']:.2f}", "Strategy SL": r["Stop Loss"],
                         "Strategy T1": r["Target 1"], "Why": " | ".join(r["_why"][:8])})
         else:
             why = rejects.get(t, "")
             detail = ""
-            if t in pasts and len(pasts[t]) >= n.MIN_HISTORY:
+            if t in pasts and len(pasts[t]) >= 60:
                 fl, r = fail_list(pasts[t], m)
                 detail = " ; ".join(fl)
                 rec["Close asof"] = float(r.Close) if "Close" in r else np.nan
             rec.update({"Status on asof": f"REJECTED - {why}", "Why": detail})
-        if t in pasts and len(pasts[t]) >= n.MIN_HISTORY:
+        if t in pasts and len(pasts[t]) >= 60:
             x = n.indicators(pasts[t]); r = x.iloc[-1]
             rec.update({"RSI": r.RSI14, "ADX": r.ADX14, "RVOL": r.RVOL, "ATR%": r.ATRpct,
                         "EMA20 dist %": r.DistEMA20, "vs 20D high %": r.Dist20, "52W high dist %": r.Dist52W})
@@ -253,13 +378,7 @@ def main():
     out = Path(__file__).resolve().parent / "output" / "daily"
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"Backtest_asof_{asof:%Y-%m-%d}.xlsx"
-    with pd.ExcelWriter(path, engine="openpyxl") as w:
-        F.to_excel(w, sheet_name="ALERT STOCKS", index=False)
-        pd.DataFrame(pick_rows).to_excel(w, sheet_name="PICKS ON DATE", index=False)
-        pd.DataFrame(sorted(funnel.items(), key=lambda kv: -kv[1]), columns=["Rejection reason", "Stocks"]).to_excel(w, sheet_name="FUNNEL", index=False)
-        for ws in w.book.worksheets:
-            for col in ws.columns:
-                ws.column_dimensions[col[0].column_letter].width = min(60, max(12, max(len(str(c.value or "")) for c in col[:30]) + 2))
+    write_report(path, F, pick_rows, funnel, asof, args.universe, nbars)
     print("\nSaved:", path)
 
 
