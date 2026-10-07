@@ -1,0 +1,40 @@
+# Save in the repo as .github/workflows/evening-scan.yml
+name: Evening swing scan
+on:
+  schedule:
+    - cron: "0 11 * * 1-5"   # 16:30 IST, Mon-Fri, after NSE close
+  workflow_dispatch: {}      # "Run workflow" button for a manual test
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    env:
+      MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install yfinance pandas numpy openpyxl requests
+      # Old reports are committed in the repo; clear them so only today's file is attached
+      - run: rm -f Equity/output/daily/*.xlsx
+      - name: Run equity screener
+        working-directory: Equity
+        run: python indian_stock_swing_analyst.py --universe NIFTY500 --smallcap
+      - uses: actions/upload-artifact@v4
+        with:
+          name: swing-report-${{ github.run_id }}
+          path: Equity/output/daily/*.xlsx
+      - name: Email report
+        if: env.MAIL_PASSWORD != ''
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: Swing scan report
+          to: ${{ secrets.MAIL_TO }}
+          from: Swing scanner <${{ secrets.MAIL_USERNAME }}>
+          body: Today's swing picks are attached.
+          attachments: Equity/output/daily/*.xlsx

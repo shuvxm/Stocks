@@ -21,6 +21,7 @@ IND_COLS = ["Rank", "Stock", "Setup", "Swing Score", "Last Close", "RSI14",
             "Fundamental", "Next Earnings"]
 
 
+
 def style(ws, title):
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
