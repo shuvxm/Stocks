@@ -22,10 +22,13 @@ IND_COLS = ["Rank", "Stock", "Setup", "Swing Score", "Last Close", "RSI14",
 
 
 
-def style(ws, title):
+def style(ws, title, action_col=None):
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
     from openpyxl.formatting.rule import ColorScaleRule, FormulaRule
+    green_fill = PatternFill("solid", fgColor="C6EFCE")
+    amber_fill = PatternFill("solid", fgColor="FFEB9C")
+    grey_fill = PatternFill("solid", fgColor="D9D9D9")
     nc = ws.max_column
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=nc)
     c = ws.cell(1, 1, title)
@@ -52,20 +55,33 @@ def style(ws, title):
     ws.row_dimensions[2].height = 30
     for w2 in [ws]:
         w2.sheet_properties.pageSetUpPr.fitToPage = True
+    # BUY ZONE green / WAIT amber on the Action column (like 06/10 report)
+    if action_col is not None:
+        letter = get_column_letter(action_col)
+        last = ws.max_row
+        ws.conditional_formatting.add(f"{letter}3:{letter}{last}", FormulaRule(
+            formula=[f'NOT(ISERROR(SEARCH("BUY ZONE",{letter}3)))'], fill=green_fill))
+        ws.conditional_formatting.add(f"{letter}3:{letter}{last}", FormulaRule(
+            formula=[f'NOT(ISERROR(SEARCH("WAIT",{letter}3)))'], fill=amber_fill))
 
 
 def main():
-    out = SRC.parent / "Swing_Tomorrow_2026-10-07.xlsx"
+    from datetime import date
+    tag = date.today().strftime("%Y-%m-%d")
+    out = SRC.parent / f"Swing_For_08Oct_{tag}.xlsx"
     with pd.ExcelWriter(out, engine="openpyxl") as wr:
         P[[c for c in BUY_COLS if c in P]].to_excel(wr, sheet_name="BUY LIST", index=False, startrow=1)
         P[[c for c in WHY_COLS if c in P]].to_excel(wr, sheet_name="WHY PICKED", index=False, startrow=1)
         P[[c for c in IND_COLS if c in P]].to_excel(wr, sheet_name="PICKS INDICATORS", index=False, startrow=1)
         W[[c for c in BUY_COLS if c in W]].to_excel(wr, sheet_name="WATCHLIST", index=False, startrow=1)
         W[[c for c in IND_COLS if c in W]].to_excel(wr, sheet_name="WATCH INDICATORS", index=False, startrow=1)
-        style(wr.book["BUY LIST"], "SWING BUY LIST for Wed 07-Oct-2026 | NIFTY regime: BEAR | Targets +7%/+10% | Qty = Rs 1L capital, 1% risk")
+        buy_action = BUY_COLS.index("Action") + 1
+        style(wr.book["BUY LIST"], f"SWING BUY LIST for {tag} | NIFTY regime: BEAR | Targets +7%/+10% | Qty = Rs 1L capital, 1% risk",
+              action_col=buy_action)
         style(wr.book["WHY PICKED"], "WHY EACH STOCK WAS PICKED + RISK FLAGS + HISTORY HIT-RATE")
         style(wr.book["PICKS INDICATORS"], "ALL INDICATORS - 15 SWING PICKS (point-in-time)")
-        style(wr.book["WATCHLIST"], "WATCHLIST - 20 stocks (score 50+, buy only on trigger/confirmation)")
+        style(wr.book["WATCHLIST"], "WATCHLIST - 20 stocks (score 50+, buy only on trigger/confirmation)",
+              action_col=buy_action)
         style(wr.book["WATCH INDICATORS"], "ALL INDICATORS - 20 WATCHLIST")
         from openpyxl.formatting.rule import ColorScaleRule
         for sh, col in (("BUY LIST", "E"), ("PICKS INDICATORS", "D"), ("WATCHLIST", "E")):
@@ -81,6 +97,7 @@ def main():
         ws2.column_dimensions["D"].width = 46
         ws2.column_dimensions["E"].width = 30
     print("Saved:", out)
+    
 
 
 main()
