@@ -1,0 +1,28 @@
+News window: Fri 09-Oct 15:30 to Sat 10-Oct 10:38 IST
+Stocks checked: 501 | in the news: 212 | NIFTY regime: BEAR
+
+LIKELY UP (62 stocks with positive news)
+  POONAWALLA   LIKELY UP    score +6  (Downtrend)
+  SIEMENS      LIKELY UP    score +6  (Downtrend)
+  COCHINSHIP   LIKELY UP    score +6  (Downtrend)
+  BSE          LIKELY UP    score +5  (Sideways)
+  INFY         LIKELY UP    score +4  (Downtrend)
+  BHARTIARTL   LIKELY UP    score +3  (Downtrend)
+  WIPRO        LIKELY UP    score +3  (Downtrend)
+  ETERNAL      LIKELY UP    score +3  (Sideways)
+  VEDL         LIKELY UP    score +3  (Sideways)
+  M&M          LIKELY UP    score +2  (Downtrend)
+
+LIKELY DOWN (21 stocks with negative news)
+  RUBICON      LIKELY DOWN  score -4  (Sideways)
+  KPIL         LIKELY DOWN  score -3  (Sideways)
+  BBOX         LIKELY DOWN  score -2  (Uptrend)
+  BANKBARODA   LIKELY DOWN  score -2  (Sideways)
+  POLYCAB      LIKELY DOWN  score -2  (Downtrend)
+  BATAINDIA    LIKELY DOWN  score -2  (Downtrend)
+  IDFCFIRSTB   LIKELY DOWN  score -2  (Downtrend)
+  BLS          LIKELY DOWN  score -2  (Downtrend)
+  NAVA         LIKELY DOWN  score -2  (Downtrend)
+  PNB          MILD DOWN    score -1  (Uptrend)
+
+Full list and every headline are in the attached Excel. Keyword-based, read the headlines before trading.

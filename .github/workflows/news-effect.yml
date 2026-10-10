@@ -1,10 +1,9 @@
-# Save in the repo as .github/workflows/evening-scan.yml
-name: Evening swing scan
+name: Sunday news effect report
 on:
-  # Exact 16:30 IST start comes from an outside scheduler (cron-job.org) pressing workflow_dispatch.
-  # GitHub's own timer below runs hours late, so it is only a backup and skips if the scan already ran.
+  # Exact 19:00 IST start comes from an outside scheduler (cron-job.org) pressing workflow_dispatch.
+  # GitHub's own timer below runs hours late, so it is only a backup and skips if the report already ran.
   schedule:
-    - cron: "37 11 * * 1-5"  # 17:07 IST, Mon-Fri - backup only
+    - cron: "37 13 * * 0"    # 19:07 IST, Sunday - backup only
   workflow_dispatch: {}      # exact-time trigger + "Run workflow" button for a manual test
 permissions:
   contents: read
@@ -21,10 +20,10 @@ jobs:
         run: |
           run=true
           if [ "${{ github.event_name }}" = "schedule" ]; then
-            # start of the current slot: the most recent 16:25 IST
-            since=$(TZ=Asia/Kolkata date -d "16:25" +%s)
+            # start of the current slot: the most recent 18:55 IST
+            since=$(TZ=Asia/Kolkata date -d "18:55" +%s)
             if [ "$since" -gt "$(date +%s)" ]; then since=$((since - 86400)); fi
-            ran=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow evening-scan.yml --limit 30 \
+            ran=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow news-effect.yml --limit 30 \
               --json databaseId,createdAt,status,conclusion \
               --jq "[.[] | select(.databaseId != $GITHUB_RUN_ID)
                          | select((.createdAt | fromdateiso8601) >= $since)
@@ -32,12 +31,12 @@ jobs:
             if [ "$ran" -gt 0 ]; then run=false; fi
           fi
           echo "run=$run" >> "$GITHUB_OUTPUT"
-  scan:
+  report:
     needs: guard
     if: needs.guard.outputs.run == 'true'
     runs-on: ubuntu-latest
     env:
-      TZ: Asia/Kolkata         # report file name and "Generated" time in IST
+      TZ: Asia/Kolkata         # report date in IST
       MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
@@ -45,15 +44,16 @@ jobs:
         with:
           python-version: "3.13"
       - run: pip install yfinance pandas numpy openpyxl requests
-      # Old reports are committed in the repo; clear them so only today's file is attached
-      - run: rm -f Equity/output/daily/*.xlsx
-      - name: Run equity screener
+      - run: rm -f Equity/output/news/*.xlsx
+      - name: Build news effect report
         working-directory: Equity
-        run: python indian_stock_swing_analyst.py --universe NIFTY500 --smallcap
+        run: python news_effect_report.py --universe NIFTY500
+      - id: name
+        run: echo "report=NewsEffectStocks_$(date +%F)" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
-          name: swing-report-${{ github.run_id }}
-          path: Equity/output/daily/*.xlsx
+          name: ${{ steps.name.outputs.report }}
+          path: Equity/output/news/*.xlsx
       - name: Email report
         if: env.MAIL_PASSWORD != ''
         uses: dawidd6/action-send-mail@v3
@@ -63,8 +63,8 @@ jobs:
           secure: true
           username: ${{ secrets.MAIL_USERNAME }}
           password: ${{ secrets.MAIL_PASSWORD }}
-          subject: Swing scan report
+          subject: ${{ steps.name.outputs.report }}
           to: ${{ secrets.MAIL_TO }}
           from: Swing scanner <${{ secrets.MAIL_USERNAME }}>
-          body: Today's swing picks are attached.
-          attachments: Equity/output/daily/*.xlsx
+          body: file://Equity/output/news/summary.txt
+          attachments: Equity/output/news/*.xlsx
