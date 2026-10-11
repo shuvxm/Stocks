@@ -49,7 +49,7 @@ jobs:
       - run: pip install yfinance pandas numpy openpyxl requests
       - name: Run equity screener
         working-directory: Equity
-        run: python indian_stock_swing_analyst.py --universe NIFTY500 --smallcap
+        run: python indian_stock_swing_analyst.py --universe NSE_LISTED --smallcap   # every NSE-listed stock
       # Old reports stay in the repo, so pick out only the file this run just wrote
       - name: Find today's report
         id: report

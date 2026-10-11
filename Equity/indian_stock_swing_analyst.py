@@ -3,6 +3,7 @@
 Install : pip install yfinance pandas numpy openpyxl requests
 Run     : python nifty_swing_analyst_v2.py
 Options : --universe NIFTY50|NIFTY100|NIFTY200|NIFTY500   (default NIFTY200)
+          --universe NSE_LISTED   every company listed on NSE (~2,300); the evening scan uses this
           --no-news          skip news lookup (faster)
           --keep-partial     use today's unfinished candle if market is open
           --picks 10         number of picks in the main sheet
@@ -52,8 +53,8 @@ HISTORY_PERIOD = "2y"
 MIN_HISTORY = 220
 CHUNK = 40                       # tickers per yfinance batch call
 
-MIN_AVG_VOLUME = 100_000         # shares/day (20d avg)
-MIN_AVG_VALUE = 20_000_000       # Rs 2 Cr traded/day (20d avg)
+MIN_AVG_VOLUME = 0               # share count is not used: 10,000 shares of a Rs 4,000 stock is Rs 4 Cr a day
+MIN_AVG_VALUE = 20_000_000       # Rs 2 Cr traded/day (20d avg) - liquidity is judged by money traded
 
 MIN_SCORE = 60                   # score needed for SWING PICKS
 WATCH_SCORE = 50                 # score needed for WATCHLIST
@@ -105,6 +106,8 @@ NSE_URLS = {
     # True 2700 needs NSE's CM master file which blocks bots; NSE_ALL covers
     # everything liquid enough to swing-trade. Àny --extra symbol is always added.
     "NSE_ALL": "COMPOSITE:NIFTY500,MIDCAP150,SMALLCAP250,MICROCAP250",
+    # Every company listed on NSE (~2,300 in the normal EQ series). The liquidity filter then drops the untradeable ones.
+    "NSE_LISTED": "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv",
 }
 NSE_ANN = "https://www.nseindia.com/companies-listing/corporate-filings-announcements?symbol={}&tabIndex=equity"
 FALLBACK = ("ADANIENT ADANIPORTS APOLLOHOSP ASIANPAINT AXISBANK BAJAJ-AUTO BAJFINANCE BAJAJFINSV BEL "
@@ -245,11 +248,17 @@ def get_universe(name):
             df.columns = [str(c).strip() for c in df.columns]
             col = next(c for c in df.columns if c.upper() == "SYMBOL")
             ind = next((c for c in df.columns if c.upper() == "INDUSTRY"), None)
-            nm = next((c for c in df.columns if c.upper().startswith("COMPANY")), None)
+            nm = next((c for c in df.columns if "COMPANY" in c.upper()), None)
+            ser = next((c for c in df.columns if c.upper() == "SERIES"), None)
+            if ser:                                # full NSE list: keep the normal EQ series only
+                df = df[df[ser].astype(str).str.strip() == "EQ"]   # (BE / BZ = trade-to-trade, surveillance)
             df[col] = df[col].astype(str).str.strip().str.upper()
             tickers = sorted(set(df[col].dropna() + ".NS"))
             sectors = dict(zip(df[col], df[ind])) if ind else {}
-            names = dict(zip(df[col], df[nm])) if nm else {}
+            names = dict(zip(df[col], df[nm].astype(str).str.strip())) if nm else {}
+            if not sectors:                        # the full list has no industry column: borrow it from the index lists
+                for p in ("NIFTY500", "MICROCAP250"):
+                    sectors.update(_fetch_index_csv(NSE_URLS[p])[1])
             return tickers, sectors, names
         except Exception as e:
             print("Universe parse failed:", e)
@@ -322,7 +331,39 @@ def download_all(tickers):
             d = history_single(t)
             if d is not None:
                 data[t] = d
+    short = [t for t, d in data.items() if len(d) < MIN_HISTORY and t.endswith(".NS")]
+    if short:
+        print(f"\n  {len(short)} stocks have under {MIN_HISTORY} days on NSE - looking for older history on BSE...")
+        found = 0
+        for t in short:
+            d = with_bse_history(t, data[t])
+            found += len(d) > len(data[t])
+            data[t] = d
+        print(f"  older BSE history added for {found} of them")
     return data
+
+
+def with_bse_history(t, d):
+    """A stock that came to NSE recently can have years of history on BSE (e.g. NOVARTIND: NSE from Apr-2026,
+    BSE from 2000). Put the BSE candles in front of the NSE ones so the indicators have enough data."""
+    try:
+        old = clean(yf.Ticker(t[:-3] + ".BO").history(period=HISTORY_PERIOD, interval="1d", auto_adjust=True))
+        if old is None or not (d["Volume"] > 0).any():
+            return d
+        nse = d.iloc[int(np.argmax(d["Volume"].to_numpy() > 0)):]   # Yahoo pads the days before the listing with flat, zero-volume rows
+        oi, di = pd.DatetimeIndex(old.index), pd.DatetimeIndex(nse.index)
+        old.index = (oi.tz_localize(None) if oi.tz is not None else oi).normalize()
+        first = (di.tz_localize(None) if di.tz is not None else di).normalize()[0]
+        old = old[old.index < first]
+        if old.empty or (first - old.index[-1]).days > 10:          # BSE must run right up to the NSE listing
+            return d
+        if not 0.8 < float(nse["Open"].iloc[0]) / float(old["Close"].iloc[-1]) < 1.25:   # ...at about the same price
+            return d
+        if di.tz is not None:
+            old.index = old.index.tz_localize(di.tz)
+        return pd.concat([old, nse])
+    except Exception:
+        return d
 
 
 def drop_partial(d):
@@ -602,7 +643,7 @@ def evaluate(t, d, m, sectors, names):
 
 
 SMALLCAP_RELAX = dict(min_history=60, max_ext=12.0, min_value=5_000_000,
-                      min_volume=20_000, rvol=0.5, rsi_max=82, adx=12,
+                      min_volume=0, rvol=0.5, rsi_max=82, adx=12,
                       atr_min=1.0, atr_max=8.0, ret1=10, ret5=20)
 
 

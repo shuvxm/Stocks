@@ -6,13 +6,13 @@ follows each pick with the same plan as backtest_picks.py (entry zone on the nex
 then Target 1 or Stop Loss, whichever comes first).
 
 Install : pip install yfinance pandas numpy openpyxl requests
-Run     : python backtest_6months.py                      (same settings as the evening scan:
-                                                           NIFTY500, smallcap mode, 15 picks, score 60+)
+Run     : python backtest_6months.py                      (same settings as the evening scan: every
+                                                           NSE-listed stock, smallcap mode, 15 picks, score 60+)
 Options : --months 6            how far back to test
-          --universe NIFTY500   NIFTY50 | NIFTY100 | NIFTY200 | NIFTY500 | ...
+          --universe NSE_LISTED NIFTY50 | NIFTY100 | NIFTY200 | NIFTY500 | NSE_LISTED | ...
           --strict              strict filters only (no smallcap 2nd pass)
           --picks 15            picks per day        --min-score 60   minimum score for a pick
-Output  : output/Backtest6Months_<Sun_11th Oct>.xlsx   (same columns as the picks backtest)
+Output  : output/Backtest6Months_<universe>_<Sun_11th Oct>.xlsx   (same columns as the picks backtest)
 Sheets  : PICKS RESULT | SUMMARY (by month) | BY SETUP | BY SCORE | BY NIFTY REGIME | NOTES
 
 What is and is not the same as the live scanner
@@ -133,7 +133,7 @@ def peak_money(res):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--months", type=int, default=6)
-    ap.add_argument("--universe", choices=list(n.NSE_URLS), default="NIFTY500")
+    ap.add_argument("--universe", choices=list(n.NSE_URLS), default="NSE_LISTED")
     ap.add_argument("--strict", action="store_true", help="strict filters only (no smallcap 2nd pass)")
     ap.add_argument("--picks", type=int, default=n.MAX_PICKS)
     ap.add_argument("--min-score", type=int, default=n.MIN_SCORE)
@@ -209,7 +209,7 @@ def main():
     ] + bp.NOTES[1:]
 
     bp.OUT_DIR.mkdir(parents=True, exist_ok=True)
-    path = bp.write(res, bp.OUT_DIR / f"Backtest6Months_{bp.day_tag(datetime.now())}.xlsx",
+    path = bp.write(res, bp.OUT_DIR / f"Backtest6Months_{args.universe}_{bp.day_tag(datetime.now())}.xlsx",
                     {"SUMMARY": by_month, "BY SETUP": by_setup, "BY SCORE": by_score, "BY NIFTY REGIME": by_regime},
                     notes)
 
