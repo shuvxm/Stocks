@@ -1,25 +1,28 @@
-"""Backtest the BUY ZONE picks from past swing reports (SwingStocks_* / NIFTY_Swing_*) against real prices.
+"""Backtest the picks from past swing reports (SwingStocks_* / NIFTY_Swing_*) against real prices.
 
-For every SWING PICKS row whose Action was "BUY ZONE", this checks what the stock
-did after the report: price now (CMP), gain/loss in % and Rs, and whether the
-report's stop loss or targets were hit first.
+For every pick this follows the report's own plan on real daily prices: was the entry zone
+traded on the purchase date, and then which came first - Target 1 or the Stop Loss.
 
 Install : pip install yfinance pandas numpy openpyxl
 Run     : python backtest_picks.py                       (every report in ../output/daily)
           python backtest_picks.py file1.xlsx file2.xlsx (only these reports)
-          python backtest_picks.py --all-actions         (also check WAIT rows)
-Output  : output/Picks_Backtest_<date_time>.xlsx
+          python backtest_picks.py --all-actions         (also check WAIT / REVIEW rows)
+Output  : output/PicksBacktest_<Sun_11th Oct>.xlsx       (named for the day the check was run)
+Columns : Sl.No | Stock | Purchase Date | CMP | Entry | Target | Entry Hit? | Target Hit? |
+          Gain/Loss % | Gain/Loss Rs | Still Open? | then everything else (result, report name ...)
 
 Rules used (also written into the NOTES sheet of the output)
-  * Buy price = the "Live Price" the report showed (the price it said was in the buy zone).
-    The next session's open is shown too, because a report made after 3:30 PM or before
-    9:15 AM can only really be bought at the next open.
-  * Trade day = first market session after the report time.
-  * Qty = the report's Suggested Qty* (Rs 1L capital, 1% risk). If that was 0 (very
-    expensive share), 1 share is used and the row is flagged.
-  * Plan result walks the daily candles from the trade day: whichever of Stop Loss or
-    Target 1 is touched first decides it. If both are touched on the same day the stop is
-    assumed first (conservative). Nothing touched yet = still OPEN, valued at CMP.
+  * Purchase date = first market session after the report time (the day the report is for).
+  * Entry hit = on the purchase date the price traded inside the report's entry zone.
+    Buy price = the open if it opened inside the zone; the top of the zone if it opened above
+    and came down into it; the bottom of the zone if it opened below and rose into it.
+    Never inside the zone that day, or opened at/below the stop = ENTRY NOT HIT, no trade.
+  * After buying, the daily candles are walked: whichever of Stop Loss or Target 1 is touched
+    first closes the trade. Both on the same day = the stop is counted (conservative).
+    If a day opens beyond the level (gap), the exit is at that open.
+  * Gain/Loss = exit at Target 1 or Stop Loss; if neither yet, the trade is still OPEN and is
+    valued at CMP. Qty = the report's Suggested Qty* (Rs 1L capital, 1% risk); if that was 0
+    (very expensive share), 1 share is used and the row is flagged.
 """
 import argparse
 import re
@@ -35,6 +38,13 @@ REPORT_DIR = BASE.parent / "output" / "daily"       # the screener saves its rep
 REPORT_GLOBS = ("NIFTY_Swing_*.xlsx", "SwingStocks_*.xlsx")   # old and new report names
 OUT_DIR = BASE / "output"
 MARKET_OPEN = (9, 15)
+ENTRY_VALID_DAYS = 1             # the report is for one day: the entry must happen on the purchase date
+
+
+def day_tag(d):
+    """Sun_11th Oct  (same style as the report file names)"""
+    suffix = "th" if 11 <= d.day <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(d.day % 10, "th")
+    return f"{d:%a}_{d.day}{suffix} {d:%b}"
 
 
 # ----------------------------------------------------------------------------
@@ -66,9 +76,7 @@ def load_picks(paths, all_actions):
         for _, r in df.iterrows():
             rows.append({
                 "Report": Path(p).name, "Generated": gen, "Stock": str(r["Stock"]).strip().upper(),
-                "Setup": r.get("Setup"), "Action (report)": r.get("Action"),
-                "Swing Score": r.get("Swing Score"), "Grade": r.get("Grade"),
-                "Report Price": r.get("Live Price") if pd.notna(r.get("Live Price")) else r.get("Last Close"),
+                "Setup": r.get("Setup"), "Swing Score": r.get("Swing Score"),
                 "Entry Low": r.get("Entry Low"), "Entry High": r.get("Entry High"),
                 "Stop Loss": r.get("Stop Loss"), "Target 1": r.get("Target 1"), "Target 2": r.get("Target 2"),
                 "Qty (report)": r.get("Suggested Qty*"),
@@ -126,107 +134,141 @@ def trade_day(index, gen):
     return later[0] if len(later) else None
 
 
-def plan_result(bars, stop, t1, t2):
-    """Walk candles: first of SL / T1 decides. Returns (result, date, exit price, t2 hit)."""
-    for dt, b in bars.iterrows():
-        hit_sl, hit_t1 = b["Low"] <= stop, b["High"] >= t1
-        if hit_sl:
-            return "STOP LOSS HIT", dt, stop, False
-        if hit_t1:
-            after = bars.loc[dt:]
-            t2_hit = bool((after["High"] >= t2).any())
-            return ("TARGET 2 HIT" if t2_hit else "TARGET 1 HIT"), dt, (t2 if t2_hit else t1), t2_hit
-    return "OPEN", None, None, False
+def simulate(bars, lo, hi, stop, t1, t2):
+    """Follow the report's plan on daily candles that start on the purchase date.
+    Returns entry (bar number or None), buy price, result, exit (bar number or None), exit price, t2 reached."""
+    o, h, l = (bars[c].to_numpy(float) for c in ("Open", "High", "Low"))
+    res = {"entry": None, "buy": np.nan, "result": "ENTRY NOT HIT", "exit": None, "exit_px": np.nan, "t2": False}
+    k, buy, from_above = None, np.nan, False
+    for i in range(min(ENTRY_VALID_DAYS, len(o))):
+        if o[i] <= stop:                           # opened at/below the stop: the plan is void
+            break
+        if lo <= o[i] <= hi:
+            k, buy = i, o[i]
+        elif o[i] > hi and l[i] <= hi:             # opened above the zone, came down into it
+            k, buy, from_above = i, hi, True
+        elif o[i] < lo and h[i] >= lo:             # opened below the zone, rose into it / trigger hit
+            k, buy = i, lo
+        if k is not None:
+            break
+    if k is None:
+        return res
+    res.update(entry=k, buy=buy, result="OPEN")
+    for i in range(k, len(o)):
+        first = i == k
+        if l[i] <= stop:
+            res.update(result="STOP LOSS HIT", exit=i, exit_px=stop if first else min(stop, o[i]))
+            return res
+        # on the buy day a high made before the dip into the zone must not count as the target
+        if h[i] >= t1 and not (first and from_above):
+            res.update(result="TARGET HIT", exit=i, exit_px=t1 if first else max(t1, o[i]))
+            for j in range(i, len(o)):             # did it go on to Target 2 before falling to the stop?
+                if j > i and l[j] <= stop:
+                    break
+                if h[j] >= t2:
+                    res["t2"] = True
+                    break
+            return res
+    return res
 
 
-def evaluate(row, hist, cmp):
-    s = row["Stock"]
-    out = dict(row)
-    d = hist.get(s)
-    price, src = cmp.get(s, (np.nan, ""))
-    out["CMP"], out["CMP Source"] = price, src
-    if d is None or d.empty:
-        out["Plan Result"] = "NO PRICE DATA"
+def evaluate(row, bars, cmp_price, cmp_src=""):
+    """row = one pick with the report's levels. bars = daily candles from the purchase date onwards (or None)."""
+    out = {
+        "Stock": row["Stock"], "Purchase Date": None, "CMP": cmp_price,
+        "Entry Low": row["Entry Low"], "Entry High": row["Entry High"],
+        "Target 1": row["Target 1"], "Target 2": row["Target 2"],
+        "Entry Hit?": "-", "Target Hit?": "-", "Gain/Loss %": np.nan, "Gain/Loss Rs": np.nan, "Still Open?": "-",
+        "Result": "", "Buy Price": np.nan, "Stop Loss": row["Stop Loss"], "Exit Price": np.nan, "Exit Date": None,
+        "Days Held": np.nan, "Qty": np.nan, "Invested Rs": np.nan, "Max Gain %": np.nan, "Max Fall %": np.nan,
+        "Setup": row.get("Setup"), "Swing Score": row.get("Swing Score"),
+        "Report": row.get("Report"), "Generated": row.get("Generated"), "CMP Source": cmp_src, "Note": "",
+    }
+    if bars is None or bars.empty:
+        out["Result"] = "NOT STARTED (no market session after the report yet)"
         return out
-    td = trade_day(d.index, row["Generated"])
-    if td is None:
-        out["Plan Result"] = "NOT STARTED (no session after report yet)"
+    out["Purchase Date"] = bars.index[0].date()
+    s = simulate(bars, row["Entry Low"], row["Entry High"], row["Stop Loss"], row["Target 1"], row["Target 2"])
+    if s["entry"] is None:
+        out.update({"Entry Hit?": "NO", "Result": "ENTRY NOT HIT"})
         return out
-    bars = d.loc[td:]
-    buy = float(row["Report Price"])
-    qty = int(row["Qty (report)"]) if pd.notna(row["Qty (report)"]) else 0
-    flag = ""
+    qty = int(row["Qty (report)"]) if pd.notna(row.get("Qty (report)")) else 0
     if qty <= 0:
-        qty, flag = 1, "Report qty was 0 (share too costly for Rs 1L at 1% risk); 1 share used"
-    nxt_open = float(bars["Open"].iloc[0])
-
+        qty, out["Note"] = 1, "Report qty was 0 (share too costly for Rs 1L at 1% risk); 1 share used"
+    buy, closed = s["buy"], s["exit"] is not None
+    held = bars.iloc[s["entry"]:(s["exit"] + 1 if closed else len(bars))]
+    exit_px = s["exit_px"] if closed else cmp_price
     out.update({
-        "Trade Day": td.date(), "Buy Price": buy, "Next Day Open": nxt_open,
-        "Gap at Open %": (nxt_open / buy - 1) * 100,
-        "Opened In Entry Zone?": "Yes" if row["Entry Low"] * 0.995 <= nxt_open <= row["Entry High"] * 1.005 else "No",
-        "Qty Used": qty, "Investment Rs": buy * qty,
-        "Days Held": len(bars),
-        "Highest Since": float(bars["High"].max()), "Lowest Since": float(bars["Low"].min()),
+        "Entry Hit?": "YES", "Result": s["result"], "Still Open?": "NO" if closed else "YES",
+        "Target Hit?": ("TARGET 1 & 2" if s["t2"] else "TARGET 1") if s["result"] == "TARGET HIT" else "NO",
+        "Buy Price": buy, "Qty": qty, "Invested Rs": buy * qty, "Days Held": len(held),
+        "Exit Price": exit_px if closed else np.nan, "Exit Date": held.index[-1].date() if closed else None,
+        "Max Gain %": (float(held["High"].max()) / buy - 1) * 100,
+        "Max Fall %": (float(held["Low"].min()) / buy - 1) * 100,
     })
-    out["Max Gain %"] = (out["Highest Since"] / buy - 1) * 100
-    out["Max Fall %"] = (out["Lowest Since"] / buy - 1) * 100
-    if np.isfinite(price):
-        out["Gain/Loss %"] = (price / buy - 1) * 100
-        out["Gain/Loss Rs"] = (price - buy) * qty
-        out["Gain/Loss % (bought at next open)"] = (price / nxt_open - 1) * 100
-        out["Gain/Loss Rs (bought at next open)"] = (price - nxt_open) * qty
-    res, when, exit_px, _ = plan_result(bars, row["Stop Loss"], row["Target 1"], row["Target 2"])
-    out["Plan Result"], out["Plan Exit Date"] = res, (when.date() if when is not None else "")
-    exit_px = exit_px if exit_px is not None else price
-    out["Plan Exit Price"] = exit_px
     if exit_px is not None and np.isfinite(exit_px):
-        out["Plan P/L %"] = (exit_px / buy - 1) * 100
-        out["Plan P/L Rs"] = (exit_px - buy) * qty
-    out["Status Now"] = ("UP" if out.get("Gain/Loss %", 0) > 0 else "DOWN") if np.isfinite(price) else ""
-    out["Note"] = flag
+        out["Gain/Loss %"] = (exit_px / buy - 1) * 100
+        out["Gain/Loss Rs"] = (exit_px - buy) * qty
     return out
 
 
 # ----------------------------------------------------------------------------
 # Excel
 # ----------------------------------------------------------------------------
-MAIN = ["Stock", "Report", "Generated", "Trade Day", "Setup", "Swing Score", "Entry Low", "Entry High",
-        "Buy Price", "Next Day Open", "Gap at Open %", "Opened In Entry Zone?", "CMP", "CMP Source",
-        "Status Now", "Gain/Loss %", "Qty Used", "Investment Rs", "Gain/Loss Rs",
-        "Gain/Loss % (bought at next open)", "Gain/Loss Rs (bought at next open)",
-        "Stop Loss", "Target 1", "Target 2", "Highest Since", "Lowest Since", "Max Gain %", "Max Fall %",
-        "Days Held", "Plan Result", "Plan Exit Date", "Plan Exit Price", "Plan P/L %", "Plan P/L Rs", "Note"]
-PCT = {c for c in MAIN if "%" in c}
-RS = {"Investment Rs", "Gain/Loss Rs", "Gain/Loss Rs (bought at next open)", "Plan P/L Rs"}
+MAIN = ["Sl.No", "Stock", "Purchase Date", "CMP", "Entry Low", "Entry High", "Target 1", "Target 2",
+        "Entry Hit?", "Target Hit?", "Gain/Loss %", "Gain/Loss Rs", "Still Open?",
+        "Result", "Buy Price", "Stop Loss", "Exit Price", "Exit Date", "Days Held", "Qty", "Invested Rs",
+        "Max Gain %", "Max Fall %", "Setup", "Swing Score", "NIFTY Regime", "Report", "Generated",
+        "CMP Source", "Note"]
+COUNTS = {"Sl.No", "Qty", "Days Held", "Swing Score", "Picks", "Entry Hit", "Entry Not Hit", "Target Hit",
+          "Stop Loss Hit", "Still Open"}
+WIDE = {"Note": 44, "Report": 34, "Best": 22, "Worst": 22, "Result": 30, "Setup": 20, "Generated": 16,
+        "Purchase Date": 13, "Exit Date": 13, "Target Hit?": 14, "CMP Source": 13, "Sl.No": 6}
+NOTES = [
+    "Purchase Date = first market session after the report time (the day the report is for).",
+    "Entry Low / Entry High / Target 1 / Target 2 / Stop Loss = the levels the report gave.",
+    "Entry Hit? = YES if on the purchase date the price traded inside the entry zone. Buy Price = the open if it "
+    "opened inside the zone, the top of the zone if it opened above and came down into it, the bottom of the zone "
+    "if it opened below and rose into it. NO = never inside the zone that day (or opened at/below the stop): no trade.",
+    "Target Hit? = TARGET 1 if Target 1 was touched before the Stop Loss; TARGET 1 & 2 if it then also reached "
+    "Target 2 before falling back to the stop. If both stop and target are touched on the same day the stop is counted.",
+    "Gain/Loss % and Rs = exit at Target 1 or at the Stop Loss (at the day's open if it gapped past the level). "
+    "If neither is hit yet the trade is Still Open and is valued at CMP.",
+    "CMP = live price if the market is open, else the latest close (see CMP Source).",
+    "Qty = the report's suggested quantity (Rs 1L capital, 1% risk per trade).",
+    "Prices are Yahoo Finance daily candles adjusted for dividends/splits, same as the scanner. "
+    "Brokerage, taxes and slippage are not deducted.",
+]
 
 
-def summary(df):
+def summary(df, by, label):
+    """One row per group (report / month / setup ...) plus an ALL row."""
     rows = []
-    for name, g in list(df.groupby("Report", sort=False)) + [("ALL REPORTS", df)]:
-        g = g[g["Gain/Loss %"].notna()] if "Gain/Loss %" in g else g.iloc[0:0]
-        if g.empty:
-            continue
-        rows.append({
-            "Report": name, "Buy Zone Picks": len(g),
-            "Up Now": int((g["Gain/Loss %"] > 0).sum()), "Down Now": int((g["Gain/Loss %"] <= 0).sum()),
-            "Avg Gain/Loss %": g["Gain/Loss %"].mean(), "Total Invested Rs": g["Investment Rs"].sum(),
-            "Total Gain/Loss Rs (hold till now)": g["Gain/Loss Rs"].sum(),
-            "Hit Target 1+": int(g["Plan Result"].str.startswith("TARGET").sum()),
-            "Hit Stop Loss": int((g["Plan Result"] == "STOP LOSS HIT").sum()),
-            "Still Open": int((g["Plan Result"] == "OPEN").sum()),
-            "Total Plan P/L Rs (follow SL/T1)": g["Plan P/L Rs"].sum(),
-            "Best": f"{g.loc[g['Gain/Loss %'].idxmax(), 'Stock']} ({g['Gain/Loss %'].max():+.1f}%)",
-            "Worst": f"{g.loc[g['Gain/Loss %'].idxmin(), 'Stock']} ({g['Gain/Loss %'].min():+.1f}%)",
-        })
+    for name, g in [(k, g) for k, g in df.groupby(by, sort=False)] + [("ALL", df)]:
+        ent = g[g["Entry Hit?"] == "YES"]
+        tgt, sl = int((ent["Result"] == "TARGET HIT").sum()), int((ent["Result"] == "STOP LOSS HIT").sum())
+        row = {
+            label: name, "Picks": len(g), "Entry Hit": len(ent), "Entry Not Hit": len(g) - len(ent),
+            "Target Hit": tgt, "Stop Loss Hit": sl, "Still Open": int((ent["Result"] == "OPEN").sum()),
+            "Win % (closed trades)": tgt / (tgt + sl) * 100 if tgt + sl else np.nan,
+            "Avg Gain/Loss %": ent["Gain/Loss %"].mean(), "Total Bought Rs": ent["Invested Rs"].sum(),
+            "Total Gain/Loss Rs": ent["Gain/Loss Rs"].sum(),
+        }
+        v = ent[ent["Gain/Loss %"].notna()]
+        if len(v):
+            row["Best"] = f"{v.loc[v['Gain/Loss %'].idxmax(), 'Stock']} ({v['Gain/Loss %'].max():+.1f}%)"
+            row["Worst"] = f"{v.loc[v['Gain/Loss %'].idxmin(), 'Stock']} ({v['Gain/Loss %'].min():+.1f}%)"
+        rows.append(row)
     return pd.DataFrame(rows)
 
 
-def write(df, path):
+def write(df, path, summaries, notes=NOTES):
+    """summaries = {sheet name: summary table}. Returns the path really written."""
     from openpyxl.formatting.rule import CellIsRule, FormulaRule
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
     green, red = PatternFill("solid", fgColor="C6EFCE"), PatternFill("solid", fgColor="FFC7CE")
-    amber = PatternFill("solid", fgColor="FFEB9C")
+    amber, grey = PatternFill("solid", fgColor="FFEB9C"), PatternFill("solid", fgColor="D9D9D9")
     head = PatternFill("solid", fgColor="1F4E78")
 
     def style(ws, cols):
@@ -234,54 +276,58 @@ def write(df, path):
             c.fill, c.font = head, Font(bold=True, color="FFFFFF", size=10)
             c.alignment = Alignment(wrap_text=True, horizontal="center", vertical="center")
         ws.row_dimensions[1].height = 42
-        ws.freeze_panes = "B2"
+        ws.freeze_panes = "C2" if cols[0] == "Sl.No" else "B2"
         ws.auto_filter.ref = ws.dimensions
         last = ws.max_row
         for j, col in enumerate(cols, 1):
             L = get_column_letter(j)
-            ws.column_dimensions[L].width = 40 if col in ("Note", "Report") else 16 if col in ("Plan Result", "Generated") else 12
-            fmt = "+0.0;-0.0;0.0" if col in PCT else "#,##0;-#,##0" if col in RS or "Rs" in col else "0.00"
+            ws.column_dimensions[L].width = WIDE.get(col, 12)
+            fmt = ("dd-mmm-yy" if "Date" in col else "dd-mmm-yy hh:mm" if col == "Generated"
+                   else "0" if col in COUNTS else "0.0" if col.startswith("Win")
+                   else "+0.0;-0.0;0.0" if "%" in col
+                   else "#,##0;-#,##0" if "Rs" in col else "0.00")
             for i in range(2, last + 1):
                 c = ws.cell(i, j)
-                if isinstance(c.value, (int, float)) and col not in ("Qty Used", "Days Held", "Swing Score",
-                                                                      "Buy Zone Picks", "Up Now", "Down Now",
-                                                                      "Hit Target 1+", "Hit Stop Loss", "Still Open"):
+                if c.value is not None and not isinstance(c.value, str):
                     c.number_format = fmt
-                if col == "Generated" and c.value is not None:
-                    c.number_format = "dd-mmm hh:mm"
-            if col in PCT or "Rs" in col and col not in ("Investment Rs", "Total Invested Rs"):
-                rng = f"{L}2:{L}{last}"
+            rng = f"{L}2:{L}{last}"
+            if "Gain" in col or "Max" in col:
                 ws.conditional_formatting.add(rng, CellIsRule(operator="greaterThan", formula=["0"], fill=green))
                 ws.conditional_formatting.add(rng, CellIsRule(operator="lessThan", formula=["0"], fill=red))
-            if col in ("Plan Result", "Status Now"):
-                rng = f"{L}2:{L}{last}"
-                ws.conditional_formatting.add(rng, FormulaRule(formula=[f'OR(LEFT({L}2,6)="TARGET",{L}2="UP")'], fill=green))
-                ws.conditional_formatting.add(rng, FormulaRule(formula=[f'OR(LEFT({L}2,4)="STOP",{L}2="DOWN")'], fill=red))
+            if col in ("Entry Hit?", "Target Hit?", "Still Open?", "Result"):
+                ws.conditional_formatting.add(rng, FormulaRule(formula=[f'LEFT({L}2,6)="TARGET"'], fill=green))
+                ws.conditional_formatting.add(rng, FormulaRule(formula=[f'LEFT({L}2,4)="STOP"'], fill=red))
+                ws.conditional_formatting.add(rng, FormulaRule(formula=[f'LEFT({L}2,5)="ENTRY"'], fill=grey))
                 ws.conditional_formatting.add(rng, FormulaRule(formula=[f'{L}2="OPEN"'], fill=amber))
+                if col == "Entry Hit?":
+                    ws.conditional_formatting.add(rng, FormulaRule(formula=[f'{L}2="YES"'], fill=green))
+                    ws.conditional_formatting.add(rng, FormulaRule(formula=[f'{L}2="NO"'], fill=grey))
+                if col == "Still Open?":
+                    ws.conditional_formatting.add(rng, FormulaRule(formula=[f'{L}2="YES"'], fill=amber))
 
+    df = df.copy()
+    df.insert(0, "Sl.No", range(1, len(df) + 1))
     cols = [c for c in MAIN if c in df.columns]
-    sm = summary(df)
-    with pd.ExcelWriter(path, engine="openpyxl") as w:
-        sm.to_excel(w, sheet_name="SUMMARY", index=False)
-        style(w.sheets["SUMMARY"], list(sm.columns))
-        w.sheets["SUMMARY"].column_dimensions["A"].width = 38
-        df[cols].to_excel(w, sheet_name="PICKS RESULT", index=False)
-        style(w.sheets["PICKS RESULT"], cols)
-        notes = pd.DataFrame({"How to read": [
-            "Buy Price = the price the report showed when it said BUY ZONE.",
-            "Next Day Open = what you could really have paid if you bought at the next market open. "
-            "Gap at Open % shows how far that was from the report price.",
-            "CMP = live price if the market is open, else the latest close (see CMP Source).",
-            "Gain/Loss % and Rs = holding from Buy Price until now, with the report's suggested quantity.",
-            "Plan Result = following the report's levels: whichever of Stop Loss or Target 1 was touched first. "
-            "If both on the same day, the stop is counted (conservative). OPEN = neither touched yet.",
-            "Plan P/L = exit at the stop or target that was hit, or CMP if still open.",
-            "Prices are Yahoo Finance daily candles adjusted for dividends/splits, same as the scanner.",
-            "A few days of results is a small sample: use it to spot problems, not to prove the strategy.",
-        ]})
-        notes.to_excel(w, sheet_name="NOTES", index=False)
-        w.sheets["NOTES"].column_dimensions["A"].width = 140
-    return path
+
+    def save(p):
+        with pd.ExcelWriter(p, engine="openpyxl") as w:
+            df[cols].to_excel(w, sheet_name="PICKS RESULT", index=False)
+            style(w.sheets["PICKS RESULT"], cols)
+            for name, sm in summaries.items():
+                sm.to_excel(w, sheet_name=name, index=False)
+                style(w.sheets[name], list(sm.columns))
+                w.sheets[name].column_dimensions["A"].width = 36
+            pd.DataFrame({"How to read": notes}).to_excel(w, sheet_name="NOTES", index=False)
+            w.sheets["NOTES"].column_dimensions["A"].width = 150
+            for c in w.sheets["NOTES"]["A"]:
+                c.alignment = Alignment(wrap_text=True, vertical="top")
+        return p
+
+    path = Path(path)
+    try:
+        return save(path)
+    except PermissionError:          # today's file is open in Excel
+        return save(path.with_name(f"{path.stem}_{datetime.now():%H%M}.xlsx"))
 
 
 def main():
@@ -297,14 +343,25 @@ def main():
     print(f"{len(picks)} picks from {len(paths)} report(s)")
     if picks.empty:
         sys.exit("No BUY ZONE picks in these reports.")
+    picks = picks.sort_values("Generated", kind="stable")
     syms = sorted(picks["Stock"].unique())
     hist = fetch_history(syms, picks["Generated"].min() - timedelta(days=7))
     print(f"price history for {len(hist)}/{len(syms)} stocks")
     cmp = fetch_cmp(syms, hist)
-    res = pd.DataFrame([evaluate(r, hist, cmp) for r in picks.to_dict("records")])
+    rows = []
+    for r in picks.to_dict("records"):
+        d, (price, src) = hist.get(r["Stock"]), cmp.get(r["Stock"], (np.nan, ""))
+        if d is None:
+            rows.append({**evaluate(r, None, price, src), "Result": "NO PRICE DATA"})
+            continue
+        td = trade_day(d.index, r["Generated"])
+        rows.append(evaluate(r, d.loc[td:] if td is not None else None, price, src))
+    res = pd.DataFrame(rows)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    path = write(res, OUT_DIR / f"Picks_Backtest_{datetime.now():%Y-%m-%d_%H%M}.xlsx")
-    show = [c for c in ["Stock", "Trade Day", "Buy Price", "CMP", "Gain/Loss %", "Gain/Loss Rs", "Plan Result"] if c in res]
+    path = write(res, OUT_DIR / f"PicksBacktest_{day_tag(datetime.now())}.xlsx",
+                 {"SUMMARY": summary(res, "Report", "Report")})
+    show = ["Stock", "Purchase Date", "CMP", "Entry Low", "Entry High", "Target 1", "Entry Hit?", "Target Hit?",
+            "Gain/Loss %", "Gain/Loss Rs", "Still Open?"]
     print(res[show].to_string(index=False, float_format=lambda v: f"{v:,.2f}"))
     print("\nSaved:", path)
 
