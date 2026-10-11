@@ -967,7 +967,8 @@ def write_excel(picks, watch, universe, m, funnel, path):
             (f"PRIORITY sheet = the SWING PICKS where every check is OK: Action is BUY ZONE, no Risk Flags (RELAXED smallcap is only "
              f"information), Fundamental is Supportive, Hist Hit 7% is {PRIORITY_MIN_HIT} or more, and only the best one from each sector. "
              f"Sorted by Hist Hit 7%, at most {PRIORITY_MAX} stocks ({PRIORITY_MAX_BEAR} when NIFTY regime is BEAR). "
-             "The other picks are listed under it with the check that failed. It is a shortlist, not a guarantee.", False),
+             "The other picks are listed under it with the check that failed. It is a way to narrow the list, not a guarantee: "
+             "in a 6-month test (Apr-Oct 2026) these stocks did about the same as the full list.", False),
             ("Action: BUY ZONE = live price is inside entry range now. WAIT = good setup but price is outside the zone (don't chase). "
              "REVIEW/AVOID = earnings within 3 days or several negative headlines. SKIP = already below stop.", False),
             ("Setups: BREAKOUT (close above prior 20D high on >=1.3x volume) | NEAR BREAKOUT (squeezed, within 3% of the 20D high - buy only above trigger) | "
