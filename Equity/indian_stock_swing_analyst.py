@@ -846,7 +846,7 @@ def enrich(row, with_news):
 
 def priority_picks(picks, regime):
     """Split the picks into (priority, left_out).
-    priority = BUY ZONE now, no Risk Flags, Fundamental Supportive, Hist Hit 7% >= PRIORITY_MIN_HIT,
+    priority = BUY ZONE now, no Risk Flags, Fundamental not Mixed, Hist Hit 7% >= PRIORITY_MIN_HIT,
     one stock per sector, best Hist Hit first, at most PRIORITY_MAX (PRIORITY_MAX_BEAR on a BEAR day).
     left_out = [(pick, reason)] for every other pick."""
     ok, left = [], []
@@ -857,8 +857,8 @@ def priority_picks(picks, regime):
             why.append("Not in buy zone")
         if flags:
             why.append("Risk flag: " + ", ".join(flags))
-        if r.get("Fundamental") != "Supportive":
-            why.append(f"Fundamental is {r.get('Fundamental') or 'N/A'}")
+        if r.get("Fundamental") == "Mixed":        # N/A = Yahoo gave no data: unknown, so it does not block
+            why.append("Fundamental is Mixed")
         if not np.isfinite(h7):
             why.append("Too few past cases to know Hist Hit 7%")
         elif h7 < PRIORITY_MIN_HIT:
@@ -871,7 +871,9 @@ def priority_picks(picks, regime):
     limit = PRIORITY_MAX_BEAR if regime == "BEAR" else PRIORITY_MAX
     prio, taken = [], {}
     for r in ok:
-        sector = r.get("Sector") or r["Stock"]
+        sector = r.get("Sector")
+        if not isinstance(sector, str) or not sector.strip():      # sector unknown: do not group it with anything
+            sector = r["Stock"]
         if sector in taken:
             left.append((r, f"Same sector as {taken[sector]} (which has the better Hist Hit 7%)"))
         elif len(prio) >= limit:
@@ -963,7 +965,11 @@ def write_priority(w, picks, regime, stamp):
     df.to_excel(w, sheet_name="PRIORITY", index=False, startrow=3)
     ws = w.sheets["PRIORITY"]
     style_sheet(ws, df, "PRIORITY PICKS - every check is OK", stamp)
-    ws["A3"] = (f"Checks: BUY ZONE now | no Risk Flags | Fundamental = Supportive | Hist Hit 7% >= {PRIORITY_MIN_HIT} | "
+    # Yahoo sometimes refuses company data (seen on GitHub): then fundamentals and results dates are unknown
+    blind = bool(picks) and all(r.get("Fundamental") in (None, "N/A") and not r.get("Next Earnings") for r in picks)
+    ws["A3"] = (("WARNING: Yahoo gave no fundamentals / results dates today, so those were NOT checked - "
+                 "look up each stock's results date yourself before buying.   " if blind else "")
+                + f"Checks: BUY ZONE now | no Risk Flags | Fundamental not Mixed | Hist Hit 7% >= {PRIORITY_MIN_HIT} | "
                 f"one stock per sector | best Hist Hit 7% first | at most {limit} stocks"
                 + (" because NIFTY regime is BEAR" if regime == "BEAR" else "")
                 + ".  At 9:15 buy only if the price is still inside Entry Low - Entry High; if it opens above, skip it.")
@@ -1006,7 +1012,7 @@ def write_excel(picks, watch, universe, m, funnel, path):
         lines = [
             ("HOW TO READ THIS REPORT", True),
             (f"PRIORITY sheet = the SWING PICKS where every check is OK: Action is BUY ZONE, no Risk Flags (RELAXED smallcap is only "
-             f"information), Fundamental is Supportive, Hist Hit 7% is {PRIORITY_MIN_HIT} or more, and only the best one from each sector. "
+             f"information), Fundamental is not Mixed, Hist Hit 7% is {PRIORITY_MIN_HIT} or more, and only the best one from each sector. "
              f"Sorted by Hist Hit 7%, at most {PRIORITY_MAX} stocks ({PRIORITY_MAX_BEAR} when NIFTY regime is BEAR). "
              "The other picks are listed under it with the check that failed. It is a way to narrow the list, not a guarantee: "
              "in a 6-month test (Apr-Oct 2026) these stocks did about the same as the full list.", False),
