@@ -4,7 +4,9 @@ from pathlib import Path
 import pandas as pd
 
 BASE = Path(__file__).resolve().parent
-SRC = sorted((BASE / "output" / "daily").glob("NIFTY_Swing_*.xlsx"))[-1]
+DAILY = BASE / "output" / "daily"
+# newest screener report (new SwingStocks_* names do not sort by date, so go by file time)
+SRC = max([*DAILY.glob("SwingStocks_*.xlsx"), *DAILY.glob("NIFTY_Swing_*.xlsx")], key=lambda p: p.stat().st_mtime)
 print("Source:", SRC.name)
 x = pd.ExcelFile(SRC)
 P = pd.read_excel(x, "SWING PICKS", header=3)

@@ -8,7 +8,8 @@ Options : --universe NIFTY50|NIFTY100|NIFTY200|NIFTY500   (default NIFTY200)
           --picks 10         number of picks in the main sheet
           --min-score 60     minimum Swing Score for a pick
 
-Output  : output/daily/NIFTY_Swing_<date_time>.xlsx
+Output  : output/daily/SwingStocks_<Tue_13th Oct>.xlsx  - named for the day the picks are for:
+          the next trading day (Mon report -> Tue, Fri evening -> Mon), or today if run before 9:15 AM
 Sheets  : SWING PICKS | WATCHLIST | ALL INDICATORS | HOW TO READ
 
 Pipeline
@@ -24,7 +25,7 @@ import math
 import time
 import xml.etree.ElementTree as ET
 from collections import Counter
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from io import StringIO
 from pathlib import Path
 from urllib.parse import quote_plus
@@ -79,6 +80,12 @@ RSI_MIN, RSI_MAX = 52, 78
 ADX_MIN = 18
 ATR_PCT_MIN, ATR_PCT_MAX = 1.3, 6.5   # stock must be able to move 7-10% in ~3 weeks
 MAX_EXT_EMA20 = 10.0             # % above EMA20 = too extended to chase
+
+# Report name
+MARKET_OPEN = (9, 15)            # a report made before this is for today, after it for the next session
+NSE_HOLIDAYS = {                 # weekday market holidays - add the new list every year
+    date(2026, 10, 20), date(2026, 11, 10), date(2026, 11, 24), date(2026, 12, 25),
+}
 
 NIFTY = "^NSEI"
 NSE_URLS = {
@@ -903,6 +910,26 @@ def write_excel(picks, watch, universe, m, funnel, path):
 
 
 # ----------------------------------------------------------------------------
+# REPORT NAME
+# ----------------------------------------------------------------------------
+def pick_day(now=None):
+    """Session the picks are for: today if the market has not opened yet, else the next trading day."""
+    now = now or datetime.now()
+    d = now.date()
+    if (now.hour, now.minute) >= MARKET_OPEN:
+        d += timedelta(days=1)
+    while d.weekday() >= 5 or d in NSE_HOLIDAYS:
+        d += timedelta(days=1)
+    return d
+
+
+def report_name(d):
+    """SwingStocks_Tue_13th Oct.xlsx"""
+    suffix = "th" if 11 <= d.day <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(d.day % 10, "th")
+    return f"SwingStocks_{d:%a}_{d.day}{suffix} {d:%b}.xlsx"
+
+
+# ----------------------------------------------------------------------------
 # MAIN
 # ----------------------------------------------------------------------------
 def main():
@@ -973,12 +1000,18 @@ def main():
     funnel["5. Final SWING PICKS"] = len(picks)
     funnel["6. WATCHLIST"] = len(watch)
 
-    path = OUTPUT_DIR / f"NIFTY_Swing_{datetime.now():%Y-%m-%d_%H%M}.xlsx"
-    write_excel(picks, watch, args.universe, m, funnel, path)
+    day = pick_day()
+    path = OUTPUT_DIR / report_name(day)
+    try:
+        write_excel(picks, watch, args.universe, m, funnel, path)
+    except PermissionError:          # an earlier report for the same day is open in Excel
+        path = path.with_name(f"{path.stem}_{datetime.now():%H%M}.xlsx")
+        write_excel(picks, watch, args.universe, m, funnel, path)
     print("\n\nFunnel:")
     for k, v in funnel.items():
         print(f"  {k}: {v}")
-    print("\nExcel saved:", path)
+    print(f"\nPicks are for: {day:%A, %d-%b-%Y}")
+    print("Excel saved:", path)
     for r in picks[:10]:
         print(f"{r['Stock']:<12}{r['Setup']:<20}score {r['Swing Score']:<4}{r['Action']:<42}"
               f"entry {r['Entry Low']:.1f}-{r['Entry High']:.1f}  SL {r['Stop Loss']:.1f}  T1 {r['Target 1']:.1f}  T2 {r['Target 2']:.1f}")
