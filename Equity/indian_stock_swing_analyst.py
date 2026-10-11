@@ -10,7 +10,7 @@ Options : --universe NIFTY50|NIFTY100|NIFTY200|NIFTY500   (default NIFTY200)
 
 Output  : output/daily/SwingStocks_<Tue_13th Oct>.xlsx  - named for the day the picks are for:
           the next trading day (Mon report -> Tue, Fri evening -> Mon), or today if run before 9:15 AM
-Sheets  : SWING PICKS | WATCHLIST | ALL INDICATORS | HOW TO READ
+Sheets  : PRIORITY | SWING PICKS | WATCHLIST | ALL INDICATORS | HOW TO READ
 
 Pipeline
   1. Batch-download 2y daily data for the whole universe (fast, with fallbacks)
@@ -81,8 +81,13 @@ ADX_MIN = 18
 ATR_PCT_MIN, ATR_PCT_MAX = 1.3, 6.5   # stock must be able to move 7-10% in ~3 weeks
 MAX_EXT_EMA20 = 10.0             # % above EMA20 = too extended to chase
 
+# PRIORITY sheet: the few picks where every check is OK
+PRIORITY_MIN_HIT = 25            # Hist Hit 7% must be at least this
+PRIORITY_MAX = 5                 # most stocks listed (5 x 20% max position = the whole capital)
+PRIORITY_MAX_BEAR = 3            # ...and fewer when the NIFTY regime is BEAR
+
 # Report name
-MARKET_OPEN = (9, 15)            # a report made before this is for today, after it for the next session
+MARKET_OPEN = (9, 15)           # a report made before this is for today, after it for the next session
 NSE_HOLIDAYS = {                 # weekday market holidays - add the new list every year
     date(2026, 10, 20), date(2026, 11, 10), date(2026, 11, 24), date(2026, 12, 25),
 }
@@ -798,10 +803,55 @@ def enrich(row, with_news):
     return row
 
 
+def priority_picks(picks, regime):
+    """Split the picks into (priority, left_out).
+    priority = BUY ZONE now, no Risk Flags, Fundamental Supportive, Hist Hit 7% >= PRIORITY_MIN_HIT,
+    one stock per sector, best Hist Hit first, at most PRIORITY_MAX (PRIORITY_MAX_BEAR on a BEAR day).
+    left_out = [(pick, reason)] for every other pick."""
+    ok, left = [], []
+    for r in picks:
+        flags = [f for f in r.get("_flags", []) if not f.startswith("RELAXED")]   # RELAXED = info, not a warning
+        h7, why = fnum(r.get("Hist Hit 7%")), []
+        if not str(r.get("Action", "")).startswith("BUY ZONE"):
+            why.append("Not in buy zone")
+        if flags:
+            why.append("Risk flag: " + ", ".join(flags))
+        if r.get("Fundamental") != "Supportive":
+            why.append(f"Fundamental is {r.get('Fundamental') or 'N/A'}")
+        if not np.isfinite(h7):
+            why.append("Too few past cases to know Hist Hit 7%")
+        elif h7 < PRIORITY_MIN_HIT:
+            why.append(f"Hist Hit 7% below {PRIORITY_MIN_HIT}")
+        if why:
+            left.append((r, " | ".join(why)))
+        else:
+            ok.append(r)
+    ok.sort(key=lambda r: (-r["Hist Hit 7%"], r.get("Rank", 0)))
+    limit = PRIORITY_MAX_BEAR if regime == "BEAR" else PRIORITY_MAX
+    prio, taken = [], {}
+    for r in ok:
+        sector = r.get("Sector") or r["Stock"]
+        if sector in taken:
+            left.append((r, f"Same sector as {taken[sector]} (which has the better Hist Hit 7%)"))
+        elif len(prio) >= limit:
+            left.append((r, f"Passed every check, but only the top {limit} are listed"
+                            + (" on a BEAR day" if regime == "BEAR" else "")))
+        else:
+            taken[sector] = r["Stock"]
+            prio.append(r)
+    left.sort(key=lambda x: x[0].get("Rank", 0))
+    return prio, left
+
+
 # ----------------------------------------------------------------------------
 # EXCEL
 # ----------------------------------------------------------------------------
-MAIN_COLS = ["Rank", "Stock", "Company", "Sector", "Setup", "Action", "Swing Score", "Grade", "Last Close",
+PRIORITY_COLS = ["Priority", "Stock", "Company", "Sector", "Setup", "Action", "Hist Hit 7%", "Hist Samples",
+                 "Swing Score", "Rank", "Live Price", "Entry Low", "Entry High", "Stop Loss", "Target 1", "Target 2",
+                 "Suggested Qty*", "Position Value*", "Fundamental", "Next Earnings", "Why Selected",
+                 "NSE Announcements"]
+LEFT_COLS = ["Rank", "Stock", "Company", "Sector", "Setup", "Action", "Hist Hit 7%", "Why Not Priority"]  # lines up with PRIORITY_COLS
+MAIN_COLS =["Rank", "Stock", "Company", "Sector", "Setup", "Action", "Swing Score", "Grade", "Last Close",
              "Live Price", "Entry Low", "Entry High", "Stop Loss", "Stop %", "Target 1", "Target 2", "RR T1",
              "RR T2", "Suggested Qty*", "Position Value*", "Hist Hit 7%", "Hist Hit 10%", "Hist Samples",
              "RVOL", "RSI14", "ADX14", "ATR%", "1M%", "3M%", "vs NIFTY 1M%", "52W High Dist%", "News Sentiment",
@@ -813,8 +863,8 @@ IND_COLS = ["Rank", "Stock", "Setup", "Swing Score", "Last Close", "EMA20", "EMA
             "Market Cap Cr", "PE", "ROE%", "Debt/Equity", "Revenue Growth%", "Earnings Growth%"]
 PRICE_FMT = {"Last Close", "Live Price", "Entry Low", "Entry High", "Stop Loss", "Target 1", "Target 2", "EMA20",
              "EMA50", "EMA200", "ATR14", "MACD", "MACD Signal", "MACD Hist", "Risk/Share"}
-INT_FMT = {"Rank", "Swing Score", "Suggested Qty*", "Hist Samples", "Position Value*", "Market Cap Cr"}
-WIDTH = {"Rank": 6, "Stock": 13, "Company": 28, "Sector": 20, "Setup": 21, "Action": 40, "Swing Score": 9,
+INT_FMT = {"Rank", "Priority", "Swing Score", "Suggested Qty*", "Hist Samples", "Position Value*", "Market Cap Cr"}
+WIDTH = {"Rank": 6, "Priority": 8, "Stock": 13, "Company": 28, "Sector": 20, "Setup": 21, "Action": 40, "Swing Score": 9,
          "Grade": 7, "Why Selected": 55, "Risk Flags": 40, "Recent News": 90, "NSE Announcements": 14,
          "Next Earnings": 13, "News Sentiment": 11, "Fundamental": 12}
 WRAP = {"Why Selected", "Risk Flags", "Recent News", "Action", "Company"}
@@ -864,10 +914,40 @@ def style_sheet(ws, df, title, subtitle):
                 end_type="num", end_value=85, end_color="63BE7B"))
 
 
+def write_priority(w, picks, regime, stamp):
+    """First sheet: only the picks where every check is OK, then the other picks with the check that failed."""
+    prio, left = priority_picks(picks, regime)
+    limit = PRIORITY_MAX_BEAR if regime == "BEAR" else PRIORITY_MAX
+    df = pd.DataFrame([{**r, "Priority": i} for i, r in enumerate(prio, 1)]).reindex(columns=PRIORITY_COLS)
+    df.to_excel(w, sheet_name="PRIORITY", index=False, startrow=3)
+    ws = w.sheets["PRIORITY"]
+    style_sheet(ws, df, "PRIORITY PICKS - every check is OK", stamp)
+    ws["A3"] = (f"Checks: BUY ZONE now | no Risk Flags | Fundamental = Supportive | Hist Hit 7% >= {PRIORITY_MIN_HIT} | "
+                f"one stock per sector | best Hist Hit 7% first | at most {limit} stocks"
+                + (" because NIFTY regime is BEAR" if regime == "BEAR" else "")
+                + ".  At 9:15 buy only if the price is still inside Entry Low - Entry High; if it opens above, skip it.")
+    ws["A3"].font = Font(name=FONT, size=10, bold=True, color="C00000")
+    if not prio:
+        ws["A5"] = "No stock passed every check today. It is fine to take no trade. The reasons are listed below."
+    top = ws.max_row + 3
+    ws.cell(top, 1, "OTHER PICKS LEFT OUT - and the check that failed").font = Font(name=FONT, size=12, bold=True)
+    for j, col in enumerate(LEFT_COLS, 1):
+        c = ws.cell(top + 1, j, col)
+        c.fill, c.font = PatternFill("solid", fgColor="7F7F7F"), Font(name=FONT, color="FFFFFF", bold=True, size=10)
+    for i, (r, why) in enumerate(left, top + 2):
+        for j, v in enumerate([r.get(k) for k in LEFT_COLS[:-1]] + [why], 1):
+            c = ws.cell(i, j, None if isinstance(v, float) and not np.isfinite(v) else v)
+            c.font = Font(name=FONT, size=10)
+            if LEFT_COLS[j - 1] == "Hist Hit 7%":
+                c.number_format = "0.0"
+    return prio
+
+
 def write_excel(picks, watch, universe, m, funnel, path):
     stamp = f"Universe: {universe} | NIFTY regime: {m['regime']} | Generated: {datetime.now():%d-%b-%Y %H:%M} | " \
             f"Targets: +{TARGET1_PCT:.0f}% / +{TARGET2_PCT:.0f}% | *Qty sized for Rs {ACCOUNT_CAPITAL:,} capital, {RISK_PER_TRADE*100:.0f}% risk"
     with pd.ExcelWriter(path, engine="openpyxl") as w:
+        write_priority(w, picks, m["regime"], stamp)
         for name, rows, title in (("SWING PICKS", picks, "NIFTY SWING PICKS"),
                                   ("WATCHLIST", watch, "WATCHLIST - near-miss / needs trigger or review")):
             df = pd.DataFrame(rows).reindex(columns=MAIN_COLS)
@@ -884,6 +964,10 @@ def write_excel(picks, watch, universe, m, funnel, path):
         ws = w.book.create_sheet("HOW TO READ")
         lines = [
             ("HOW TO READ THIS REPORT", True),
+            (f"PRIORITY sheet = the SWING PICKS where every check is OK: Action is BUY ZONE, no Risk Flags (RELAXED smallcap is only "
+             f"information), Fundamental is Supportive, Hist Hit 7% is {PRIORITY_MIN_HIT} or more, and only the best one from each sector. "
+             f"Sorted by Hist Hit 7%, at most {PRIORITY_MAX} stocks ({PRIORITY_MAX_BEAR} when NIFTY regime is BEAR). "
+             "The other picks are listed under it with the check that failed. It is a shortlist, not a guarantee.", False),
             ("Action: BUY ZONE = live price is inside entry range now. WAIT = good setup but price is outside the zone (don't chase). "
              "REVIEW/AVOID = earnings within 3 days or several negative headlines. SKIP = already below stop.", False),
             ("Setups: BREAKOUT (close above prior 20D high on >=1.3x volume) | NEAR BREAKOUT (squeezed, within 3% of the 20D high - buy only above trigger) | "
@@ -1012,6 +1096,7 @@ def main():
         print(f"  {k}: {v}")
     print(f"\nPicks are for: {day:%A, %d-%b-%Y}")
     print("Excel saved:", path)
+    print("PRIORITY (every check OK):", ", ".join(r["Stock"] for r in priority_picks(picks, m["regime"])[0]) or "none today")
     for r in picks[:10]:
         print(f"{r['Stock']:<12}{r['Setup']:<20}score {r['Swing Score']:<4}{r['Action']:<42}"
               f"entry {r['Entry Low']:.1f}-{r['Entry High']:.1f}  SL {r['Stop Loss']:.1f}  T1 {r['Target 1']:.1f}  T2 {r['Target 2']:.1f}")
