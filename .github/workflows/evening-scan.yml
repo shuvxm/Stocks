@@ -5,7 +5,12 @@ on:
   # GitHub's own timer below runs hours late, so it is only a backup and skips if the scan already ran.
   schedule:
     - cron: "37 11 * * 1-5"  # 17:07 IST, Mon-Fri - backup only
-  workflow_dispatch: {}      # exact-time trigger + "Run workflow" button for a manual test
+  workflow_dispatch:         # exact-time trigger + "Run workflow" button for a manual test
+    inputs:
+      force:
+        description: "Run even on a weekend / NSE holiday (manual test)"
+        type: boolean
+        default: false
 permissions:
   contents: read
   actions: read
@@ -15,12 +20,25 @@ jobs:
     outputs:
       run: ${{ steps.check.outputs.run }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: Equity/indian_stock_swing_analyst.py   # for its NSE_HOLIDAYS list
+          sparse-checkout-cone-mode: false
       - id: check
         env:
           GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force }}
         run: |
           run=true
-          if [ "${{ github.event_name }}" = "schedule" ]; then
+          # No market today (weekend or NSE holiday): skip, unless "force" was ticked for a manual test
+          today="date($(TZ=Asia/Kolkata date +%Y), $(TZ=Asia/Kolkata date +%-m), $(TZ=Asia/Kolkata date +%-d))"
+          if [ "$FORCE" != "true" ]; then
+            if [ "$(TZ=Asia/Kolkata date +%u)" -ge 6 ] || grep -qF "$today" Equity/indian_stock_swing_analyst.py; then
+              echo "No NSE session today - skipping (tick 'force' to run anyway)"
+              run=false
+            fi
+          fi
+          if [ "$run" = "true" ] && [ "${{ github.event_name }}" = "schedule" ]; then
             # start of the current slot: the most recent 16:25 IST
             since=$(TZ=Asia/Kolkata date -d "16:25" +%s)
             if [ "$since" -gt "$(date +%s)" ]; then since=$((since - 86400)); fi
