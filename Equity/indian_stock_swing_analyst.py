@@ -85,7 +85,8 @@ MAX_EXT_EMA20 = 10.0             # % above EMA20 = too extended to chase
 # PRIORITY sheet: the few picks where every check is OK
 PRIORITY_MIN_HIT = 25            # Hist Hit 7% must be at least this
 PRIORITY_MAX = 5                 # most stocks listed (5 x 20% max position = the whole capital)
-PRIORITY_MAX_BEAR = 3            # ...and fewer when the NIFTY regime is BEAR
+PRIORITY_MAX_BEAR = 1            # ...and only the best one when the NIFTY regime is BEAR
+MAX_PICKS_BEAR = 5               # SWING PICKS on a BEAR day (6-month test: fewer BEAR-day trades = better results)
 
 # Report name
 MARKET_OPEN = (9, 15)           # a report made before this is for today, after it for the next session
@@ -573,6 +574,18 @@ def trade_levels(r, s):
     return dict(lo=lo, hi=hi, ref=ref, stop=stop, t1=t1, t2=t2, risk=risk, rr1=rr1, rr2=rr2, qty=qty)
 
 
+def risk_flags(r, h7):
+    flags = []
+    if r.RSI14 > 70: flags.append("RSI>70 (hot)")
+    if r.DistEMA20 > 7: flags.append("Extended >7% above EMA20")
+    if r.RET1 > 5: flags.append("Big 1D spike")
+    if r.ADX14 < 20: flags.append("Weak trend (ADX<20)")
+    if r.ATRpct > 5: flags.append("High volatility")
+    if np.isfinite(h7) and h7 < 15: flags.append(f"Low hist. +{TARGET1_PCT:.0f}% hit-rate")
+    if r.RVOL < 1: flags.append("Volume below average")
+    return flags
+
+
 def entry_status(live, row):
     lo, hi, stop, s = row["Entry Low"], row["Entry High"], row["Stop Loss"], row["Setup"]
     if live <= stop:
@@ -606,15 +619,7 @@ def evaluate(t, d, m, sectors, names):
         return None, "reward:risk too low"
     h7, h10, n = hist_stats(x)
     sc, why = score(r, m, h7)
-
-    flags = []
-    if r.RSI14 > 70: flags.append("RSI>70 (hot)")
-    if r.DistEMA20 > 7: flags.append("Extended >7% above EMA20")
-    if r.RET1 > 5: flags.append("Big 1D spike")
-    if r.ADX14 < 20: flags.append("Weak trend (ADX<20)")
-    if r.ATRpct > 5: flags.append("High volatility")
-    if np.isfinite(h7) and h7 < 15: flags.append(f"Low hist. +{TARGET1_PCT:.0f}% hit-rate")
-    if r.RVOL < 1: flags.append("Volume below average")
+    flags = risk_flags(r, h7)
 
     S = sym(t)
     row = {
@@ -701,7 +706,8 @@ def evaluate_relaxed(t, d, m, sectors, names, rx=SMALLCAP_RELAX):
            "Up/Down Vol 10D": r.UDVol, "BB %B": r.BBpctB, "BB Width%": r.BBwidth,
            "BB Squeeze": "Yes" if r.BBsqRecent >= 1 else "No", "Stoch K": r.StochK, "Stoch D": r.StochD,
            "NIFTY Regime": m["regime"], "NIFTY 1M%": m["r21"], "NIFTY 3M%": m["r63"],
-           "_why": why, "_flags": ["RELAXED smallcap"], "_ticker": t, "_mode": "relaxed",
+           # real risk flags too: without them an overheated smallcap passed the PRIORITY "no Risk Flags" check
+           "_why": why, "_flags": ["RELAXED smallcap"] + risk_flags(r, h7), "_ticker": t, "_mode": "relaxed",
            "NSE Announcements": NSE_ANN.format(S)}
     return row, None
 
@@ -970,9 +976,10 @@ def write_priority(w, picks, regime, stamp):
     ws["A3"] = (("WARNING: Yahoo gave no fundamentals / results dates today, so those were NOT checked - "
                  "look up each stock's results date yourself before buying.   " if blind else "")
                 + f"Checks: BUY ZONE now | no Risk Flags | Fundamental not Mixed | Hist Hit 7% >= {PRIORITY_MIN_HIT} | "
-                f"one stock per sector | best Hist Hit 7% first | at most {limit} stocks"
+                f"one stock per sector | best Hist Hit 7% first | at most {limit} stock{'s' if limit != 1 else ''}"
                 + (" because NIFTY regime is BEAR" if regime == "BEAR" else "")
-                + ".  At 9:15 buy only if the price is still inside Entry Low - Entry High; if it opens above, skip it.")
+                + ".  At 9:15 buy only if the price is still inside Entry Low - Entry High; if it opens above, skip it."
+                + "  EXIT: at Target 1 sell HALF and move the Stop Loss of the rest to your buy price; sell the rest at Target 2.")
     ws["A3"].font = Font(name=FONT, size=10, bold=True, color="C00000")
     if not prio:
         ws["A5"] = "No stock passed every check today. It is fine to take no trade. The reasons are listed below."
@@ -1013,15 +1020,17 @@ def write_excel(picks, watch, universe, m, funnel, path):
             ("HOW TO READ THIS REPORT", True),
             (f"PRIORITY sheet = the SWING PICKS where every check is OK: Action is BUY ZONE, no Risk Flags (RELAXED smallcap is only "
              f"information), Fundamental is not Mixed, Hist Hit 7% is {PRIORITY_MIN_HIT} or more, and only the best one from each sector. "
-             f"Sorted by Hist Hit 7%, at most {PRIORITY_MAX} stocks ({PRIORITY_MAX_BEAR} when NIFTY regime is BEAR). "
-             "The other picks are listed under it with the check that failed. It is a way to narrow the list, not a guarantee: "
-             "in a 6-month test (Apr-Oct 2026) these stocks did about the same as the full list.", False),
+             f"Sorted by Hist Hit 7%, at most {PRIORITY_MAX} stocks ({PRIORITY_MAX_BEAR} when NIFTY regime is BEAR, and SWING PICKS "
+             f"then has only {MAX_PICKS_BEAR}). The other picks are listed under it with the check that failed. It is a way to narrow "
+             "the list, not a guarantee. In a 6-month test (Apr-Oct 2026, NIFTY -7%) these rules with the exit below made about "
+             "+1.2% per PRIORITY trade (Rs 1L account: about +Rs 15,000, 6 of 7 months in profit), before brokerage and taxes.", False),
             ("Action: BUY ZONE = live price is inside entry range now. WAIT = good setup but price is outside the zone (don't chase). "
              "REVIEW/AVOID = earnings within 3 days or several negative headlines. SKIP = already below stop.", False),
             ("Setups: BREAKOUT (close above prior 20D high on >=1.3x volume) | NEAR BREAKOUT (squeezed, within 3% of the 20D high - buy only above trigger) | "
              "EMA20 PULLBACK (uptrend dipping to EMA20) | MOMENTUM | TREND CONTINUATION.", False),
             (f"Targets are fixed at +{TARGET1_PCT:.0f}% and +{TARGET2_PCT:.0f}% from entry. Stop = tighter of {STOP_ATR} x ATR or 10-day swing low, "
-             f"limited to {STOP_MIN_PCT:.0f}-{STOP_MAX_PCT:.1f}% below entry. Suggested approach: book half at Target 1, trail the rest.", False),
+             f"limited to {STOP_MIN_PCT:.0f}-{STOP_MAX_PCT:.1f}% below entry. Exit plan: at Target 1 sell half and move the stop "
+             "of the other half to your buy price (it can no longer lose), then sell it at Target 2.", False),
             (f"Hist Hit 7%/10% = % of past days (this stock, last ~2y, similar uptrend conditions) where price reached the target within {HOLD_DAYS} trading days. "
              "It ignores whether the stop was hit first, so treat it as a rough 'can this stock move that far' guide.", False),
             ("Swing Score (0-100): trend 20, momentum 20, volume 20, breakout structure 15, relative strength 10, volatility fit 5, historical hit-rate 10, "
@@ -1124,7 +1133,8 @@ def main():
             print("\n  enrich failed for", r["Stock"], e)
         time.sleep(0.2)
     final.sort(key=lambda r: r["Swing Score"], reverse=True)
-    picks = [r for r in final if r["Swing Score"] >= MIN_SCORE and not r["_avoid"]][:MAX_PICKS]
+    limit = min(MAX_PICKS, MAX_PICKS_BEAR) if m["regime"] == "BEAR" else MAX_PICKS
+    picks = [r for r in final if r["Swing Score"] >= MIN_SCORE and not r["_avoid"]][:limit]
     ids = {id(r) for r in picks}
     watch = [r for r in final if id(r) not in ids and r["Swing Score"] >= WATCH_SCORE][:MAX_WATCH]
     for i, r in enumerate(picks, 1): r["Rank"] = i
