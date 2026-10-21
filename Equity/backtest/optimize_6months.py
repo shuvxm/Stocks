@@ -25,6 +25,9 @@ Variants (see VARIANTS below)
   BEAR_LIGHT  on a BEAR day: 5 swing picks and 1 PRIORITY stock only
   BEAR_OFF    on a BEAR day: no new trades
   HALF_EXIT   sell half at Target 1, move the stop of the other half to the buy price, sell it at Target 2
+  HOLD_T2     keep the whole position for Target 2, stop unchanged
+  HOLD_T2_BE  keep the whole position for Target 2, stop moved to the buy price at Target 1
+  TRAIL8      no Target 2: at Target 1 the stop moves to the buy price, then trails 8% under the highest high
   T5          Target 1 = +5%, Target 2 = +7% (stop unchanged)
 """
 import argparse
@@ -59,6 +62,9 @@ VARIANTS = {
     "BEAR_LIGHT": {"bear": "light"},
     "BEAR_OFF": {"bear": "off"},
     "HALF_EXIT": {"exit": "half"},
+    "HOLD_T2": {"exit": "t2"},
+    "HOLD_T2_BE": {"exit": "t2_be"},
+    "TRAIL8": {"exit": "trail8"},
     "T5": {"t1": 5.0, "t2": 7.0},
 }
 DESCRIBE = {
@@ -72,6 +78,9 @@ DESCRIBE = {
     "BEAR_LIGHT": "BEAR day: only 5 swing picks, 1 PRIORITY",
     "BEAR_OFF": "BEAR day: no new trades",
     "HALF_EXIT": "Sell half at T1, stop to buy price, rest at T2",
+    "HOLD_T2": "Hold all for T2, stop unchanged",
+    "HOLD_T2_BE": "Hold all for T2, stop to buy price after T1",
+    "TRAIL8": "After T1: stop to buy price, then trail 8% under the high",
     "T5": "Target 1 = +5%, Target 2 = +7%",
 }
 
@@ -233,6 +242,33 @@ def sim_half(bars, lo, hi, stop, t1, t2):
     return s, None, (s["exit_px"] + float(bars["Close"].iloc[-1])) / 2
 
 
+def sim_hold(bars, lo, hi, stop, t1, t2, plan):
+    """Keep the WHOLE position after Target 1.
+    t2     : sell at Target 2, the stop stays where it was
+    t2_be  : sell at Target 2, the stop moves to the buy price once Target 1 is reached
+    trailN : no Target 2; the stop moves to the buy price at Target 1, then trails N% under the highest high
+    Returns (simulate() result, final exit bar or None, exit price)."""
+    s = bp.simulate(bars, lo, hi, stop, t1, t2)
+    if s["result"] != "TARGET HIT":
+        return s, s["exit"], s["exit_px"]
+    o, h, l = (bars[c].to_numpy(float) for c in ("Open", "High", "Low"))
+    i, buy = s["exit"], s["buy"]
+    trail = float(plan[5:]) / 100 if plan.startswith("trail") else None
+    stop2 = stop if plan == "t2" else buy
+    if trail is None and h[i] >= t2:              # ran through both targets that day
+        return s, i, max(t2, o[i]) if i > s["entry"] else t2
+    top = h[i]
+    for j in range(i + 1, len(o)):
+        if trail is not None:
+            stop2 = max(buy, top * (1 - trail))
+        if l[j] <= stop2:
+            return s, j, min(stop2, o[j])
+        if trail is None and h[j] >= t2:
+            return s, j, max(t2, o[j])
+        top = max(top, h[j])
+    return s, None, float(bars["Close"].iloc[-1])
+
+
 SIMS = {}
 
 
@@ -249,6 +285,8 @@ def trade(data, r, cfg):
     if len(bars):
         if plan == "half":
             s, ex, px = sim_half(bars, r["Entry Low"], r["Entry High"], r["Stop Loss"], t1, t2)
+        elif plan != "t1":
+            s, ex, px = sim_hold(bars, r["Entry Low"], r["Entry High"], r["Stop Loss"], t1, t2, plan)
         else:
             s = bp.simulate(bars, r["Entry Low"], r["Entry High"], r["Stop Loss"], t1, t2)
             ex, px = s["exit"], s["exit_px"]

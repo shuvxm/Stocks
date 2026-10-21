@@ -979,7 +979,7 @@ def write_priority(w, picks, regime, stamp):
                 f"one stock per sector | best Hist Hit 7% first | at most {limit} stock{'s' if limit != 1 else ''}"
                 + (" because NIFTY regime is BEAR" if regime == "BEAR" else "")
                 + ".  At 9:15 buy only if the price is still inside Entry Low - Entry High; if it opens above, skip it."
-                + "  EXIT: at Target 1 sell HALF and move the Stop Loss of the rest to your buy price; sell the rest at Target 2.")
+                + "  EXIT: sell at Target 1 (6-month test: holding on for Target 2 made less money).")
     ws["A3"].font = Font(name=FONT, size=10, bold=True, color="C00000")
     if not prio:
         ws["A5"] = "No stock passed every check today. It is fine to take no trade. The reasons are listed below."
@@ -1022,15 +1022,15 @@ def write_excel(picks, watch, universe, m, funnel, path):
              f"information), Fundamental is not Mixed, Hist Hit 7% is {PRIORITY_MIN_HIT} or more, and only the best one from each sector. "
              f"Sorted by Hist Hit 7%, at most {PRIORITY_MAX} stocks ({PRIORITY_MAX_BEAR} when NIFTY regime is BEAR, and SWING PICKS "
              f"then has only {MAX_PICKS_BEAR}). The other picks are listed under it with the check that failed. It is a way to narrow "
-             "the list, not a guarantee. In a 6-month test (Apr-Oct 2026, NIFTY -7%) these rules with the exit below made about "
-             "+1.2% per PRIORITY trade (Rs 1L account: about +Rs 15,000, 6 of 7 months in profit), before brokerage and taxes.", False),
+             "the list, not a guarantee. In a 6-month test (Apr-Oct 2026, NIFTY -7%) these rules, selling at Target 1, made about "
+             "+1.1% per PRIORITY trade (Rs 1L account: about +Rs 22,000, 6 of 7 months in profit), before brokerage and taxes.", False),
             ("Action: BUY ZONE = live price is inside entry range now. WAIT = good setup but price is outside the zone (don't chase). "
              "REVIEW/AVOID = earnings within 3 days or several negative headlines. SKIP = already below stop.", False),
             ("Setups: BREAKOUT (close above prior 20D high on >=1.3x volume) | NEAR BREAKOUT (squeezed, within 3% of the 20D high - buy only above trigger) | "
              "EMA20 PULLBACK (uptrend dipping to EMA20) | MOMENTUM | TREND CONTINUATION.", False),
             (f"Targets are fixed at +{TARGET1_PCT:.0f}% and +{TARGET2_PCT:.0f}% from entry. Stop = tighter of {STOP_ATR} x ATR or 10-day swing low, "
-             f"limited to {STOP_MIN_PCT:.0f}-{STOP_MAX_PCT:.1f}% below entry. Exit plan: at Target 1 sell half and move the stop "
-             "of the other half to your buy price (it can no longer lose), then sell it at Target 2.", False),
+             f"limited to {STOP_MIN_PCT:.0f}-{STOP_MAX_PCT:.1f}% below entry. Exit plan: sell at Target 1. In the 6-month test, "
+             "holding on for Target 2 (half or all, with or without a trailing stop) made less money on a Rs 1L account.", False),
             (f"Hist Hit 7%/10% = % of past days (this stock, last ~2y, similar uptrend conditions) where price reached the target within {HOLD_DAYS} trading days. "
              "It ignores whether the stop was hit first, so treat it as a rough 'can this stock move that far' guide.", False),
             ("Swing Score (0-100): trend 20, momentum 20, volume 20, breakout structure 15, relative strength 10, volatility fit 5, historical hit-rate 10, "
